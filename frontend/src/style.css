@@ -1,0 +1,442 @@
+/* Together AI Voice Demo - Styles */
+
+:root {
+  /* Together AI Brand Colors */
+  --together-blue: #0066FF;
+  --together-blue-bright: #3385FF;
+  --together-blue-dim: #0052CC;
+  
+  /* Base palette - Dark theme */
+  --bg-primary: #0A0A0B;
+  --bg-secondary: #111113;
+  --bg-tertiary: #18181B;
+  --bg-elevated: #1F1F23;
+  
+  --text-primary: #FAFAFA;
+  --text-secondary: #A1A1AA;
+  --text-tertiary: #71717A;
+  
+  --border-color: #27272A;
+  --border-focus: var(--together-blue);
+  
+  /* Status colors */
+  --success: #22C55E;
+  --error: #EF4444;
+  --warning: #F59E0B;
+  
+  /* Spacing */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+  
+  /* Typography */
+  --font-sans: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+  
+  /* Transitions */
+  --transition-fast: 150ms ease;
+  --transition-base: 250ms ease;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#app {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header */
+.header {
+  padding: var(--space-lg) var(--space-xl);
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+  background: var(--bg-secondary);
+}
+
+.logo {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+  display: flex;
+  align-items: center;
+}
+
+.logo-text {
+  color: var(--text-primary);
+}
+
+.logo-dot {
+  color: var(--together-blue);
+  font-weight: 700;
+}
+
+.logo-ai {
+  color: var(--text-primary);
+}
+
+.header-subtitle {
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+  padding-left: var(--space-lg);
+  border-left: 1px solid var(--border-color);
+}
+
+/* Main content */
+.main {
+  flex: 1;
+  padding: var(--space-xl);
+  max-width: 900px;
+  width: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+}
+
+/* Sections */
+section {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: var(--space-lg);
+}
+
+/* Input groups */
+.input-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.input-group + .input-group {
+  margin-top: var(--space-md);
+}
+
+.input-row {
+  display: flex;
+  gap: var(--space-md);
+  margin-top: var(--space-md);
+}
+
+.input-row .input-group {
+  flex: 1;
+  margin-top: 0;
+}
+
+.input-row .input-small {
+  flex: 0 0 120px;
+}
+
+label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.optional {
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
+input, textarea {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-primary);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+input:focus, textarea:focus {
+  outline: none;
+  border-color: var(--together-blue);
+  box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.15);
+}
+
+input::placeholder, textarea::placeholder {
+  color: var(--text-tertiary);
+}
+
+textarea {
+  resize: vertical;
+  min-height: 100px;
+  line-height: 1.5;
+}
+
+/* Controls */
+.controls {
+  display: flex;
+  gap: var(--space-md);
+  margin-top: var(--space-lg);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-lg);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn .icon {
+  width: 18px;
+  height: 18px;
+}
+
+.btn-primary {
+  background: var(--together-blue);
+  color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--together-blue-bright);
+}
+
+.btn-primary:active:not(:disabled) {
+  background: var(--together-blue-dim);
+}
+
+.btn-secondary {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  border-color: var(--text-tertiary);
+}
+
+.btn-text {
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  cursor: pointer;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: 4px;
+  transition: color var(--transition-fast);
+}
+
+.btn-text:hover {
+  color: var(--text-secondary);
+}
+
+/* Status section */
+.status-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.status-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.status-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  transition: background var(--transition-base);
+}
+
+.status-indicator.ready {
+  background: var(--text-tertiary);
+}
+
+.status-indicator.connecting {
+  background: var(--warning);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.status-indicator.connected {
+  background: var(--success);
+}
+
+.status-indicator.streaming {
+  background: var(--together-blue);
+  animation: pulse 0.5s ease-in-out infinite;
+}
+
+.status-indicator.error {
+  background: var(--error);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Audio visualizer */
+.audio-visualizer {
+  height: 80px;
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+#visualizer-canvas {
+  width: 100%;
+  height: 100%;
+}
+
+/* Log */
+.log-container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.log-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.log {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  padding: var(--space-md);
+  max-height: 200px;
+  overflow-y: auto;
+  color: var(--text-secondary);
+}
+
+.log:empty::before {
+  content: 'No events yet...';
+  color: var(--text-tertiary);
+}
+
+.log-entry {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.log-entry + .log-entry {
+  margin-top: var(--space-xs);
+}
+
+.log-time {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.log-entry.info .log-msg { color: var(--text-secondary); }
+.log-entry.success .log-msg { color: var(--success); }
+.log-entry.error .log-msg { color: var(--error); }
+.log-entry.audio .log-msg { color: var(--together-blue-bright); }
+
+/* Footer */
+.footer {
+  padding: var(--space-md) var(--space-xl);
+  border-top: 1px solid var(--border-color);
+  font-size: 13px;
+  color: var(--text-tertiary);
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  background: var(--bg-secondary);
+}
+
+.footer .separator {
+  color: var(--border-color);
+}
+
+.footer a {
+  color: var(--together-blue);
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+.footer a:hover {
+  color: var(--together-blue-bright);
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+  .header {
+    padding: var(--space-md);
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-sm);
+  }
+  
+  .header-subtitle {
+    padding-left: 0;
+    border-left: none;
+  }
+  
+  .main {
+    padding: var(--space-md);
+  }
+  
+  .input-row {
+    flex-direction: column;
+  }
+  
+  .input-row .input-small {
+    flex: 1;
+  }
+  
+  .controls {
+    flex-direction: column;
+  }
+  
+  .btn {
+    width: 100%;
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "together-voice-demo",
+  "version": "0.1.0",
+  "description": "Together AI Voice Demo - WebSocket TTS Testing",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3",
+    "vite": "^5.0.12"
+  }
+}

@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Voice Demo | Together AI</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  </head>
+  <body>
+    <div id="app">
+      <header class="header">
+        <div class="logo">
+          <span class="logo-text">together</span><span class="logo-dot">.</span><span class="logo-ai">ai</span>
+        </div>
+        <div class="header-subtitle">Voice Demo</div>
+      </header>
+
+      <main class="main">
+        <section class="config-section">
+          <div class="input-group">
+            <label for="ws-url">WebSocket URL</label>
+            <input 
+              type="text" 
+              id="ws-url" 
+              placeholder="wss://api.together.ai/v1/deployment-request/your-deployment/v1/tts/ws"
+              spellcheck="false"
+            />
+          </div>
+          
+          <div class="input-row">
+            <div class="input-group">
+              <label for="api-key">API Key <span class="optional">(optional)</span></label>
+              <input 
+                type="password" 
+                id="api-key" 
+                placeholder="Bearer token for authentication"
+              />
+            </div>
+            
+            <div class="input-group input-small">
+              <label for="language">Language</label>
+              <input 
+                type="text" 
+                id="language" 
+                value="en"
+                placeholder="en"
+              />
+            </div>
+          </div>
+        </section>
+
+        <section class="tts-section">
+          <div class="input-group">
+            <label for="text-input">Text to Synthesize</label>
+            <textarea 
+              id="text-input" 
+              rows="4"
+              placeholder="Enter text to convert to speech..."
+            >Hello! This is a test of the Together AI text-to-speech system. The audio should stream back in real-time.</textarea>
+          </div>
+          
+          <div class="controls">
+            <button id="speak-btn" class="btn btn-primary">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="5 3 19 12 5 21 5 3"></polygon>
+              </svg>
+              <span>Speak</span>
+            </button>
+            
+            <button id="stop-btn" class="btn btn-secondary" disabled>
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="6" y="6" width="12" height="12"></rect>
+              </svg>
+              <span>Stop</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="status-section">
+          <div class="status-header">
+            <div class="status-indicator" id="status-indicator"></div>
+            <span id="status-text">Ready</span>
+          </div>
+          
+          <div class="audio-visualizer" id="visualizer">
+            <canvas id="visualizer-canvas"></canvas>
+          </div>
+          
+          <div class="log-container">
+            <div class="log-header">
+              <span>Event Log</span>
+              <button id="clear-log" class="btn-text">Clear</button>
+            </div>
+            <div class="log" id="log"></div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <span>Together AI Voice Demo</span>
+        <span class="separator">•</span>
+        <a href="https://docs.together.ai/docs/text-to-speech" target="_blank">Documentation</a>
+      </footer>
+    </div>
+    
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
