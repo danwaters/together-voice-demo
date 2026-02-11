@@ -240,8 +240,7 @@ voice-demo/
 │   └── vite.config.ts
 ├── docs/
 │   ├── screenshot.png    # WebSocket mode screenshot
-│   ├── screenshot2.png   # Together API mode screenshot
-│   └── design-system.md  # Visual style reference
+│   └── screenshot2.png   # Together API mode screenshot
 ├── LICENSE
 └── README.md
 ```
