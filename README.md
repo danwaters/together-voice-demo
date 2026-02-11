@@ -1,21 +1,25 @@
 # Together AI Voice Demo
 
-Test and evaluate Together AI's WebSocket-based text-to-speech streaming with two included tools: a **CLI script** that plays audio straight to your speakers, and a **web UI** with real-time visualization.
+Test and evaluate Together AI text-to-speech models with two included tools: a **CLI script** that plays audio straight to your speakers, and a **web UI** with real-time visualization and TTFB measurement.
 
-![Voice Demo Screenshot](docs/screenshot.png)
+The demo supports two modes:
+
+- **Together API** — Call any Together AI TTS model directly via the REST API. Supports streaming, voice selection, and TTFB benchmarking.
+- **WebSocket** — Connect to a Together AI TTS WebSocket deployment for real-time streaming.
+
+![Together API Mode](docs/screenshot2.png)
 
 ## Prerequisites
 
 - Python 3.10+
 - Node.js 18+ (for the web UI only)
-- A Together AI TTS WebSocket URL (e.g. `wss://api.together.ai/v1/deployment-request/{deployment-id}/v1/tts/ws`)
-- A Together AI API key (if your endpoint requires authentication)
+- A [Together AI API key](https://api.together.ai/settings/api-keys)
 
 ---
 
-## Option 1 — CLI (quickest way to hear audio)
+## Quick Start — Together API (CLI)
 
-The CLI script connects directly to a TTS WebSocket server, streams audio to your speakers, and logs time-to-first-byte (TTFB).
+The fastest way to hear a Together AI TTS model. The CLI streams audio to your speakers and logs time-to-first-byte (TTFB).
 
 ### Setup
 
@@ -24,61 +28,104 @@ cd cli
 pip install -r requirements.txt
 ```
 
+### Available Models
+
+| Model | ID | Example Voices |
+|-------|----|----------------|
+| Orpheus 3B | `canopylabs/orpheus-3b-0.1-ft` | `tara`, `leah`, `jess`, `leo`, `dan`, `mia`, `zac`, `zoe` |
+| Kokoro 82M | `hexgrad/Kokoro-82M` | `af_heart`, `af_alloy`, `af_bella`, `am_adam`, `am_echo`, `bf_emma`, `bm_george` |
+| Cartesia Sonic 3 | `cartesia/sonic-3` | `sweet lady`, `newsman`, `california girl`, `british lady`, `indian man` |
+| Cartesia Sonic 2 | `cartesia/sonic-2` | `sweet lady`, `reading man`, `calm lady`, `commercial man` |
+| Cartesia Sonic | `cartesia/sonic` | `sweet lady`, `newsman`, `reading lady`, `pilot over intercom` |
+
+> For the full list of voices for each model, see the [Together AI TTS documentation](https://docs.together.ai/docs/text-to-speech).
+
 ### Run
 
+**Orpheus 3B** (streaming):
+
 ```bash
-python tts_stream.py "Hello world" \
-  --url wss://api.together.ai/v1/deployment-request/your-deployment/v1/tts/ws \
+python tts_stream.py "Hello! This is a test of the Orpheus model." \
+  --model canopylabs/orpheus-3b-0.1-ft \
+  --voice tara \
   --api-key $TOGETHER_API_KEY
 ```
 
-You can also set environment variables instead of passing flags:
+**Kokoro 82M** (streaming):
 
 ```bash
-export TTS_WS_URL="wss://api.together.ai/v1/deployment-request/your-deployment/v1/tts/ws"
-export TOGETHER_API_KEY="your-key"
-python tts_stream.py "Hello world"
+python tts_stream.py "Hello! This is a test of the Kokoro model." \
+  --model hexgrad/Kokoro-82M \
+  --voice af_heart \
+  --api-key $TOGETHER_API_KEY
+```
+
+**Cartesia Sonic 3**:
+
+```bash
+python tts_stream.py "Hello! This is a test of Cartesia Sonic 3." \
+  --model cartesia/sonic-3 \
+  --voice "german conversational woman" \
+  --api-key $TOGETHER_API_KEY
+```
+
+**Cartesia Sonic 2**:
+
+```bash
+python tts_stream.py "Hello! This is a test of Cartesia Sonic 2." \
+  --model cartesia/sonic-2 \
+  --voice "sweet lady" \
+  --api-key $TOGETHER_API_KEY
 ```
 
 ### Example output
 
 ```
-Connecting to: wss://api.together.ai/v1/deployment-request/xxx/v1/tts/ws
-Language: en
-Text: Hello world
+Model: canopylabs/orpheus-3b-0.1-ft
+Voice: tara
+Text: Hello! This is a test of the Orpheus model.
 
 Request sent, waiting for audio...
-Session: float32 @ 24000Hz
 
 ⚡ TTFB: 142ms
 
-🔊 +0.48s
-✓ Complete: 1.23s total audio
+🔊 +0.48s (1.23s total)
+✓ Complete: 2.56s total audio
 Done.
 ```
 
-### CLI options
+### CLI Options
 
 | Flag | Description |
 |------|-------------|
-| `--url`, `-u` | WebSocket URL (or set `TTS_WS_URL`) |
-| `--api-key`, `-k` | API key (or set `TOGETHER_API_KEY`) |
-| `--lang`, `-l` | Language code, default `en` |
+| `text` (positional) | Text to synthesize |
+| `--model`, `-m` | Together AI model ID (e.g. `canopylabs/orpheus-3b-0.1-ft`) |
+| `--voice`, `-v` | Voice name (defaults: Orpheus → `tara`, Kokoro → `af_heart`, Cartesia → `sweet lady`) |
+| `--api-key`, `-k` | Together API key (or set `TOGETHER_API_KEY` env var) |
+| `--url`, `-u` | WebSocket URL — use instead of `--model` for WebSocket mode |
+| `--lang`, `-l` | Language code for WebSocket mode (default: `en`) |
+
+You can set your API key as an environment variable to avoid passing it every time:
+
+```bash
+export TOGETHER_API_KEY="your-key-here"
+python tts_stream.py "Hello world" --model canopylabs/orpheus-3b-0.1-ft
+```
 
 ---
 
-## Option 2 — Web UI
+## Web UI
 
-A browser-based interface with audio visualization, an event log, and support for multiple languages. The web UI uses a lightweight Python backend that proxies your browser's WebSocket connection to the TTS server.
+A browser-based interface with model/voice selection, real-time audio visualization, TTFB measurement, and an event log. The web UI uses a lightweight Python backend that relays API calls and proxies WebSocket connections.
 
 ### Architecture
 
 ```
-┌─────────────────┐     WebSocket      ┌─────────────────┐     WebSocket     ┌─────────────────┐
-│                 │  ◄──────────────►  │                 │  ◄─────────────►  │                 │
-│  Browser (UI)   │                    │  Python Backend  │                   │   TTS Server    │
-│                 │   Audio Chunks     │    (Proxy)       │    TTS Protocol   │                 │
-└─────────────────┘                    └─────────────────┘                   └─────────────────┘
+┌─────────────────┐     WebSocket      ┌─────────────────┐
+│                 │  ◄──────────────►  │                 │
+│  Browser (UI)   │                    │  Python Backend  │──► Together REST API
+│                 │   Audio Chunks     │    (FastAPI)     │──► TTS WebSocket Server
+└─────────────────┘                    └─────────────────┘
 ```
 
 ### 1. Start the backend
@@ -119,30 +166,46 @@ You should see:
 
 ### 3. Use the demo
 
-Open [http://localhost:5173/](http://localhost:5173/) in your browser, then:
+Open [http://localhost:5173/](http://localhost:5173/) in your browser.
 
-1. **WebSocket URL** — Enter your TTS server URL
+#### Together API mode (recommended for getting started)
+
+1. Click the **Together API** tab at the top of the config panel
+2. **Model** — Pick a model from the dropdown (Orpheus 3B, Kokoro 82M, Cartesia Sonic 3/2/1), or select "— Custom —" to type any model ID
+3. **Voice** — The voice dropdown automatically populates with all available voices for the selected model. Pick one, or select "— Custom —" to type any voice name
+4. **Together API Key** — Paste your [Together AI API key](https://api.together.ai/settings/api-keys)
+5. **Text** — Enter the text you want to synthesize
+6. Click **Speak** (or press `Cmd/Ctrl + Enter`)
+
+Once audio starts streaming, you'll see:
+- A **TTFB banner** showing the time-to-first-byte in large text (color-coded: green < 200ms, yellow < 500ms, red ≥ 500ms)
+- A real-time **audio visualizer** showing frequency bars
+- An **event log** with detailed timing information
+
+#### WebSocket mode
+
+1. Click the **WebSocket** tab
+2. **WebSocket URL** — Enter your TTS server URL
    - Together deployment: `wss://api.together.ai/v1/deployment-request/{deployment-id}/v1/tts/ws`
    - Local server: `ws://localhost:6380/v1/tts/ws`
-2. **API Key** (optional) — Your Together API key for authenticated endpoints
-3. **Language** — Language code (e.g. `en`, `ja`, `es`)
-4. **Text** — Enter the text you want to synthesize
-5. Click **Speak** to stream audio!
+3. **API Key** (optional) — Your Together API key for authenticated endpoints
+4. **Language** — Language code (e.g. `en`, `ja`, `es`)
+5. **Text** — Enter text and click **Speak**
 
-> **Tip:** Press `Cmd+Enter` (or `Ctrl+Enter`) in the text area to speak without clicking the button.
+> **Tip:** All settings are saved to your browser's localStorage, so they persist between sessions.
 
 ---
 
 ## WebSocket Protocol
 
-Both tools use a simple JSON message protocol compatible with Together AI TTS deployments:
+Both tools support a JSON message protocol compatible with Together AI TTS WebSocket deployments:
 
 ### Client → Server
 
 ```json
-{"type": "open", "language": "en"}     // Start session
-{"type": "text", "text": "Hello!"}     // Send text
-{"type": "eos"}                         // End of stream
+{"type": "open", "language": "en"}
+{"type": "text", "text": "Hello!"}
+{"type": "eos"}
 ```
 
 ### Server → Client
@@ -154,27 +217,30 @@ Both tools use a simple JSON message protocol compatible with Together AI TTS de
 {"type": "error", "message": "Error description"}
 ```
 
-Audio is base64-encoded float32 PCM at 24kHz mono.
+Audio is base64-encoded float32 PCM at 24 kHz mono.
+
+---
 
 ## Project Structure
 
 ```
 voice-demo/
 ├── cli/
-│   ├── tts_stream.py     # CLI streaming client
-│   └── requirements.txt  # CLI dependencies
+│   ├── tts_stream.py     # CLI streaming client (WebSocket + Together API)
+│   └── requirements.txt
 ├── backend/
-│   ├── main.py           # FastAPI WebSocket proxy
-│   └── pyproject.toml    # Backend dependencies
+│   ├── main.py           # FastAPI backend (WS proxy + Together API relay)
+│   └── pyproject.toml
 ├── frontend/
-│   ├── index.html        # Main HTML
+│   ├── index.html        # Main HTML (mode tabs, model/voice selection)
 │   ├── src/
-│   │   ├── main.ts       # WebSocket client & audio
-│   │   └── style.css     # Styles
+│   │   ├── main.ts       # Client logic, audio scheduling, TTFB display
+│   │   └── style.css     # Dark theme styles
 │   ├── package.json
 │   └── vite.config.ts
 ├── docs/
-│   └── screenshot.png
+│   ├── screenshot.png    # WebSocket mode screenshot
+│   └── screenshot2.png   # Together API mode screenshot
 ├── LICENSE
 └── README.md
 ```
@@ -184,10 +250,13 @@ voice-demo/
 | Issue | Solution |
 |-------|----------|
 | `unsupported_language` error | Use ISO 639-1 codes: `en`, `ja`, `es`, etc. (not `jp`) |
-| No audio plays | Check browser console; ensure AudioContext is allowed |
-| Connection refused | Verify backend is running on port 8000 |
-| CORS errors | Use the backend proxy; don't connect directly from browser |
+| No audio plays in browser | Check browser console; ensure AudioContext is allowed (click the page first) |
+| Connection refused | Verify the backend is running on port 8000 |
+| CORS errors | Use the backend proxy; don't connect to the Together API directly from the browser |
 | CLI: `No module named sounddevice` | Run `pip install -r requirements.txt` in the `cli/` directory |
+| CLI: `No module named httpx` | Run `pip install -r requirements.txt` in the `cli/` directory |
+| Together API: 401 error | Check your API key is correct and has TTS access |
+| Together API: no audio | Verify the voice name is valid for the selected model |
 
 ## License
 

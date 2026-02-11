@@ -3,27 +3,36 @@ Together AI Voice Demo - Backend Server
 
 A FastAPI WebSocket proxy for testing TTS backends.
 The backend acts as a bridge between the browser and various TTS WebSocket servers,
-handling protocol translation as needed.
+handling protocol translation as needed. Also supports Together REST API mode
+for streaming TTS via the Together AI audio/speech endpoint.
 """
 
+import array
 import asyncio
 import base64
 import json
 import logging
+import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Optional
 
+import httpx
 import websockets
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Models that support streaming via Together API
+STREAMING_MODELS = {
+    "canopylabs/orpheus-3b-0.1-ft",
+    "hexgrad/Kokoro-82M",
+}
 
 
 @asynccontextmanager
@@ -53,10 +62,14 @@ app.add_middleware(
 
 class TTSConfig(BaseModel):
     """TTS connection configuration from client."""
-    ws_url: str
+    ws_url: str = ""
     api_key: Optional[str] = None
     language: str = "en"
     sample_rate: int = 24000
+    # Together API mode fields
+    mode: str = "websocket"  # "websocket" or "together"
+    model: str = ""
+    voice: str = ""
 
 
 @dataclass
@@ -66,6 +79,160 @@ class SessionState:
     upstream_ws: Optional[websockets.WebSocketClientProtocol] = None
     is_connected: bool = False
 
+
+# ---------- Audio conversion helpers ----------
+
+def int16_pcm_to_float32_b64(pcm_bytes: bytes) -> str:
+    """Convert int16 PCM bytes to base64-encoded float32 PCM."""
+    int16_arr = array.array('h')
+    int16_arr.frombytes(pcm_bytes)
+    float32_arr = array.array('f', (s / 32768.0 for s in int16_arr))
+    return base64.b64encode(float32_arr.tobytes()).decode('ascii')
+
+
+# ---------- Together REST API mode ----------
+
+async def handle_together_mode(websocket: WebSocket, config_msg: dict):
+    """Handle TTS via the Together REST API (streaming or non-streaming)."""
+    model = config_msg.get("model", "")
+    voice = config_msg.get("voice", "tara")
+    api_key = config_msg.get("api_key", "")
+    sample_rate = config_msg.get("sample_rate", 24000)
+
+    if not model:
+        await websocket.send_json({"type": "error", "message": "model is required"})
+        return
+
+    if not api_key:
+        await websocket.send_json({"type": "error", "message": "API key is required for Together API mode"})
+        return
+
+    # Signal ready
+    await websocket.send_json({"type": "ready"})
+    logger.info(f"Together API mode: model={model}, voice={voice}")
+
+    # Collect text messages until EOS
+    text_parts: list[str] = []
+    try:
+        while True:
+            msg = await websocket.receive_json()
+            msg_type = msg.get("type", "")
+
+            if msg_type == "open":
+                # Acknowledge the open with a synthetic session.created
+                await websocket.send_json({
+                    "type": "session.created",
+                    "format": "float32",
+                    "sample_rate": sample_rate,
+                    "language": msg.get("language", "en"),
+                })
+            elif msg_type == "text":
+                text_parts.append(msg.get("text", ""))
+            elif msg_type == "eos":
+                break
+            # Ignore other message types
+    except WebSocketDisconnect:
+        return
+
+    text = " ".join(text_parts)
+    if not text:
+        await websocket.send_json({"type": "error", "message": "No text provided"})
+        return
+
+    supports_streaming = model in STREAMING_MODELS
+
+    url = "https://api.together.xyz/v1/audio/speech"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    payload: dict = {
+        "model": model,
+        "input": text,
+        "voice": voice,
+        "sample_rate": sample_rate,
+    }
+
+    # Always use raw PCM format — avoids WAV header parsing issues
+    # (e.g. Cartesia returns IEEE float WAV which Python's wave module can't read)
+    payload["response_format"] = "raw"
+    payload["response_encoding"] = "pcm_s16le"
+
+    if supports_streaming:
+        payload["stream"] = True
+
+    send_time = time.perf_counter()
+    first_byte_time: Optional[float] = None
+
+    try:
+        timeout = httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream("POST", url, json=payload, headers=headers) as response:
+                if response.status_code != 200:
+                    body = await response.aread()
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": f"Together API error ({response.status_code}): "
+                                   f"{body.decode('utf-8', errors='replace')[:500]}"
+                    })
+                    return
+
+                buffer = b""
+                min_bytes = 4800 * 2  # ~0.2s at 24 kHz, 16-bit
+
+                async for chunk in response.aiter_bytes():
+                    if first_byte_time is None:
+                        first_byte_time = time.perf_counter()
+                        ttfb_ms = (first_byte_time - send_time) * 1000
+                        logger.info(f"⚡ Together API TTFB: {ttfb_ms:.0f}ms")
+                        await websocket.send_json({
+                            "type": "ttfb",
+                            "ttfb_ms": round(ttfb_ms, 1),
+                        })
+
+                    buffer += chunk
+
+                    while len(buffer) >= min_bytes:
+                        process_bytes = buffer[:min_bytes]
+                        buffer = buffer[min_bytes:]
+                        audio_b64 = int16_pcm_to_float32_b64(process_bytes)
+                        await websocket.send_json({
+                            "type": "audio.chunk",
+                            "audio": audio_b64,
+                            "isFinal": False,
+                        })
+
+                # Flush remaining buffer
+                if buffer and len(buffer) >= 2:
+                    if len(buffer) % 2 != 0:
+                        buffer = buffer[:-1]
+                    audio_b64 = int16_pcm_to_float32_b64(buffer)
+                    await websocket.send_json({
+                        "type": "audio.chunk",
+                        "audio": audio_b64,
+                        "isFinal": True,
+                    })
+                else:
+                    await websocket.send_json({
+                        "type": "audio.chunk",
+                        "audio": "",
+                        "isFinal": True,
+                    })
+
+    except httpx.TimeoutException:
+        await websocket.send_json({"type": "error", "message": "Together API request timed out"})
+    except WebSocketDisconnect:
+        logger.info("Client disconnected during Together API streaming")
+    except Exception as e:
+        logger.error(f"Together API error: {e}")
+        try:
+            await websocket.send_json({"type": "error", "message": f"Together API error: {e}"})
+        except Exception:
+            pass
+
+
+# ---------- WebSocket proxy mode (existing) ----------
 
 async def forward_to_client(
     client_ws: WebSocket,
@@ -150,82 +317,46 @@ async def forward_to_upstream(
         logger.error(f"Forward to upstream error: {e}")
 
 
-@app.websocket("/ws/tts")
-async def websocket_tts_proxy(websocket: WebSocket):
-    """
-    WebSocket endpoint that proxies TTS requests.
-    
-    Protocol:
-    1. Client connects and sends config: {"type": "config", "ws_url": "...", "api_key": "...", "language": "..."}
-    2. Server connects to upstream TTS and confirms: {"type": "ready"}
-    3. Client sends TTS commands which are forwarded to upstream
-    4. Server forwards audio chunks back to client
-    """
-    await websocket.accept()
-    logger.info("🔌 Client connected")
-    
-    session: Optional[SessionState] = None
+async def handle_websocket_mode(websocket: WebSocket, config_msg: dict):
+    """Handle TTS via upstream WebSocket proxy (original behaviour)."""
+    config = TTSConfig(
+        ws_url=config_msg.get("ws_url", ""),
+        api_key=config_msg.get("api_key"),
+        language=config_msg.get("language", "en"),
+        sample_rate=config_msg.get("sample_rate", 24000),
+    )
+
+    if not config.ws_url:
+        await websocket.send_json({
+            "type": "error",
+            "message": "ws_url is required",
+        })
+        return
+
+    session = SessionState(config=config)
+    logger.info(f"📡 Connecting to TTS server: {config.ws_url}")
+
+    headers = {}
+    if config.api_key:
+        headers["Authorization"] = f"Bearer {config.api_key}"
+
     upstream_ws = None
-    
     try:
-        # Wait for config message
-        config_msg = await websocket.receive_json()
-        
-        if config_msg.get("type") != "config":
-            await websocket.send_json({
-                "type": "error",
-                "message": "First message must be config"
-            })
-            return
-        
-        # Parse config
-        config = TTSConfig(
-            ws_url=config_msg.get("ws_url", ""),
-            api_key=config_msg.get("api_key"),
-            language=config_msg.get("language", "en"),
-            sample_rate=config_msg.get("sample_rate", 24000),
+        upstream_ws = await websockets.connect(
+            config.ws_url,
+            additional_headers=headers if headers else None,
         )
-        
-        if not config.ws_url:
-            await websocket.send_json({
-                "type": "error",
-                "message": "ws_url is required"
-            })
-            return
-        
-        session = SessionState(config=config)
-        logger.info(f"📡 Connecting to TTS server: {config.ws_url}")
-        
-        # Build headers for upstream connection
-        headers = {}
-        if config.api_key:
-            headers["Authorization"] = f"Bearer {config.api_key}"
-        
-        # Connect to upstream TTS server
-        try:
-            upstream_ws = await websockets.connect(
-                config.ws_url,
-                additional_headers=headers if headers else None,
-            )
-            session.upstream_ws = upstream_ws
-            session.is_connected = True
-            
-            logger.info("✓ Connected to TTS server")
-            await websocket.send_json({"type": "ready"})
-            
-        except Exception as e:
-            logger.error(f"Failed to connect to TTS server: {e}")
-            await websocket.send_json({
-                "type": "error",
-                "message": f"Failed to connect to TTS server: {e}"
-            })
-            return
-        
+        session.upstream_ws = upstream_ws
+        session.is_connected = True
+
+        logger.info("✓ Connected to TTS server")
+        await websocket.send_json({"type": "ready"})
+
         # Start bidirectional forwarding
         forward_task = asyncio.create_task(
             forward_to_client(websocket, upstream_ws, session)
         )
-        
+
         try:
             await forward_to_upstream(websocket, upstream_ws, session)
         finally:
@@ -234,21 +365,62 @@ async def websocket_tts_proxy(websocket: WebSocket):
                 await forward_task
             except asyncio.CancelledError:
                 pass
-                
+
+    except Exception as e:
+        logger.error(f"Failed to connect to TTS server: {e}")
+        await websocket.send_json({
+            "type": "error",
+            "message": f"Failed to connect to TTS server: {e}",
+        })
+    finally:
+        if upstream_ws:
+            await upstream_ws.close()
+
+
+# ---------- Main WebSocket endpoint ----------
+
+@app.websocket("/ws/tts")
+async def websocket_tts_proxy(websocket: WebSocket):
+    """
+    WebSocket endpoint that proxies TTS requests.
+    
+    Protocol:
+    1. Client connects and sends config:
+       - WebSocket mode: {"type": "config", "mode": "websocket", "ws_url": "...", ...}
+       - Together mode:  {"type": "config", "mode": "together", "model": "...", "voice": "...", "api_key": "...", ...}
+    2. Server connects/confirms: {"type": "ready"}
+    3. Client sends TTS commands (open, text, eos)
+    4. Server streams audio chunks back
+    """
+    await websocket.accept()
+    logger.info("🔌 Client connected")
+
+    try:
+        config_msg = await websocket.receive_json()
+
+        if config_msg.get("type") != "config":
+            await websocket.send_json({
+                "type": "error",
+                "message": "First message must be config",
+            })
+            return
+
+        mode = config_msg.get("mode", "websocket")
+
+        if mode == "together":
+            await handle_together_mode(websocket, config_msg)
+        else:
+            await handle_websocket_mode(websocket, config_msg)
+
     except WebSocketDisconnect:
         logger.info("Client disconnected")
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
         try:
-            await websocket.send_json({
-                "type": "error",
-                "message": str(e)
-            })
-        except:
+            await websocket.send_json({"type": "error", "message": str(e)})
+        except Exception:
             pass
     finally:
-        if upstream_ws:
-            await upstream_ws.close()
         logger.info("🔌 Session ended")
 
 
