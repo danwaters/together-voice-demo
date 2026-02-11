@@ -1,17 +1,29 @@
 /**
  * Together AI Voice Demo - Frontend Client
  * 
- * Connects to the backend WebSocket proxy, which forwards requests
- * to the configured TTS server and streams audio back.
+ * Supports two modes:
+ *  - WebSocket: Connects to the backend WebSocket proxy, which forwards requests
+ *    to the configured TTS server and streams audio back.
+ *  - Together API: Uses the Together AI REST API (via the backend) for TTS with
+ *    streaming support and TTFB measurement.
  */
 
 import './style.css';
 
-// Types
+// ---------- Types ----------
+
 interface TTSConfig {
   ws_url: string;
   api_key?: string;
   language: string;
+  sample_rate: number;
+}
+
+interface TogetherConfig {
+  mode: 'together';
+  model: string;
+  voice: string;
+  api_key: string;
   sample_rate: number;
 }
 
@@ -20,35 +32,134 @@ interface TTSMessage {
   [key: string]: unknown;
 }
 
+type AppMode = 'websocket' | 'together';
 type Status = 'ready' | 'connecting' | 'connected' | 'streaming' | 'error';
 
-// Audio settings
+// ---------- Voice definitions per model ----------
+
+// Full Cartesia voice list (shared across sonic, sonic-2, sonic-3)
+const CARTESIA_VOICES: string[] = [
+  'german conversational woman', 'nonfiction man', 'friendly sidekick',
+  'french conversational lady', 'french narrator lady', 'german reporter woman',
+  'indian lady', 'british reading lady', 'british narration lady',
+  'japanese children book', 'japanese woman conversational', 'japanese male conversational',
+  'reading lady', 'newsman', 'child', 'meditation lady', 'maria',
+  "1920's radioman", 'newslady', 'calm lady', 'helpful woman', 'mexican woman',
+  'korean narrator woman', 'russian calm lady', 'russian narrator man 1',
+  'russian narrator man 2', 'russian narrator woman', 'hinglish speaking lady',
+  'italian narrator woman', 'polish narrator woman', 'chinese female conversational',
+  'pilot over intercom', 'chinese commercial man', 'french narrator man',
+  'spanish narrator man', 'reading man', 'new york man', 'friendly french man',
+  'barbershop man', 'indian man', 'australian customer support man',
+  'friendly australian man', 'wise man', 'friendly reading man', 'customer support man',
+  'dutch confident man', 'dutch man', 'hindi reporter man', 'italian calm man',
+  'italian narrator man', 'swedish narrator man', 'polish confident man',
+  'spanish-speaking storyteller man', 'kentucky woman', 'chinese commercial woman',
+  'middle eastern woman', 'hindi narrator woman', 'sarah', 'sarah curious',
+  'laidback woman', 'reflective woman', 'helpful french lady', 'pleasant brazilian lady',
+  'customer support lady', 'british lady', 'wise lady', 'australian narrator lady',
+  'indian customer support lady', 'swedish calm lady', 'spanish narrator lady',
+  'salesman', 'yogaman', 'movieman', 'wizardman', 'australian woman',
+  'korean calm woman', 'friendly german man', 'announcer man', 'wise guide man',
+  'midwestern man', 'kentucky man', 'brazilian young man', 'chinese call center man',
+  'german reporter man', 'confident british man', 'southern man', 'classy british man',
+  'polite man', 'mexican man', 'korean narrator man', 'turkish narrator man',
+  'turkish calm man', 'hindi calm man', 'hindi narrator man', 'polish narrator man',
+  'polish young man', 'alabama male', 'australian male', 'anime girl',
+  'japanese man book', 'sweet lady', 'commercial lady', 'teacher lady', 'princess',
+  'commercial man', 'asmr lady', 'professional woman', 'tutorial man',
+  'calm french woman', 'new york woman', 'spanish-speaking lady', 'midwestern woman',
+  'sportsman', 'storyteller lady', 'spanish-speaking man', 'doctor mischief',
+  'spanish-speaking reporter man', 'young spanish-speaking woman', 'the merchant',
+  'stern french man', 'madame mischief', 'german storyteller man', 'female nurse',
+  'german conversation man', 'friendly brazilian man', 'german woman', 'southern woman',
+  'british customer support lady', 'chinese woman narrator', 'pleasant man',
+  'california girl', 'john', 'anna',
+];
+
+const MODEL_VOICES: Record<string, string[]> = {
+  'canopylabs/orpheus-3b-0.1-ft': [
+    'tara', 'leah', 'jess', 'leo', 'dan', 'mia', 'zac', 'zoe',
+  ],
+  'hexgrad/Kokoro-82M': [
+    'af_heart', 'af_alloy', 'af_aoede', 'af_bella', 'af_jessica', 'af_kore',
+    'af_nicole', 'af_nova', 'af_river', 'af_sarah', 'af_sky',
+    'am_adam', 'am_echo', 'am_eric', 'am_fenrir', 'am_liam', 'am_michael',
+    'am_onyx', 'am_puck', 'am_santa',
+    'bf_alice', 'bf_emma', 'bf_isabella', 'bf_lily',
+    'bm_daniel', 'bm_fable', 'bm_george', 'bm_lewis',
+    'jf_alpha', 'jf_gongitsune', 'jf_nezumi', 'jf_tebukuro', 'jm_kumo',
+    'zf_xiaobei', 'zf_xiaoni', 'zf_xiaoxiao', 'zf_xiaoyi',
+    'zm_yunjian', 'zm_yunxi', 'zm_yunxia', 'zm_yunyang',
+    'ef_dora', 'em_alex', 'em_santa', 'ff_siwis',
+    'hf_alpha', 'hf_beta', 'hm_omega', 'hm_psi',
+    'if_sara', 'im_nicola', 'pf_dora', 'pm_alex', 'pm_santa',
+  ],
+  'cartesia/sonic-3': CARTESIA_VOICES,
+  'cartesia/sonic-2': CARTESIA_VOICES,
+  'cartesia/sonic':   CARTESIA_VOICES,
+};
+
+const MODEL_DEFAULT_VOICE: Record<string, string> = {
+  'canopylabs/orpheus-3b-0.1-ft': 'tara',
+  'hexgrad/Kokoro-82M': 'af_heart',
+  'cartesia/sonic-3': 'sweet lady',
+  'cartesia/sonic-2': 'sweet lady',
+  'cartesia/sonic': 'sweet lady',
+};
+
+// ---------- Audio settings ----------
+
 const DEFAULT_SAMPLE_RATE = 24000;
 const AUDIO_CHANNELS = 1;
 
-// State
+// ---------- State ----------
+
+let currentMode: AppMode = 'websocket';
 let websocket: WebSocket | null = null;
 let audioContext: AudioContext | null = null;
 let audioQueue: Float32Array[] = [];
-let isPlaying = false;
 let currentStatus: Status = 'ready';
 let analyser: AnalyserNode | null = null;
 let animationFrameId: number | null = null;
+/** The audio-clock time at which the next buffer should start playing. */
+let nextStartTime = 0;
+/** Active audio sources so we can stop them on demand. */
+let activeSources: AudioBufferSourceNode[] = [];
 
-// DOM Elements
+// ---------- DOM Elements ----------
+
+// Mode tabs
+const modeTabs = document.querySelectorAll<HTMLButtonElement>('.mode-tab');
+const wsPanel = document.getElementById('ws-panel') as HTMLDivElement;
+const togetherPanel = document.getElementById('together-panel') as HTMLDivElement;
+
+// WebSocket mode
 const wsUrlInput = document.getElementById('ws-url') as HTMLInputElement;
 const apiKeyInput = document.getElementById('api-key') as HTMLInputElement;
 const languageInput = document.getElementById('language') as HTMLInputElement;
+
+// Together API mode
+const togetherModelSelect = document.getElementById('together-model-select') as HTMLSelectElement;
+const togetherModelCustom = document.getElementById('together-model-custom') as HTMLInputElement;
+const togetherVoiceSelect = document.getElementById('together-voice-select') as HTMLSelectElement;
+const togetherVoiceCustom = document.getElementById('together-voice-custom') as HTMLInputElement;
+const togetherApiKeyInput = document.getElementById('together-api-key') as HTMLInputElement;
+
+// Shared
 const textInput = document.getElementById('text-input') as HTMLTextAreaElement;
 const speakBtn = document.getElementById('speak-btn') as HTMLButtonElement;
 const stopBtn = document.getElementById('stop-btn') as HTMLButtonElement;
 const statusIndicator = document.getElementById('status-indicator') as HTMLDivElement;
 const statusText = document.getElementById('status-text') as HTMLSpanElement;
+const ttfbBanner = document.getElementById('ttfb-banner') as HTMLDivElement;
+const ttfbValue = document.getElementById('ttfb-value') as HTMLDivElement;
 const logContainer = document.getElementById('log') as HTMLDivElement;
 const clearLogBtn = document.getElementById('clear-log') as HTMLButtonElement;
 const visualizerCanvas = document.getElementById('visualizer-canvas') as HTMLCanvasElement;
 
-// Utilities
+// ---------- Utilities ----------
+
 function formatTime(): string {
   const now = new Date();
   return now.toLocaleTimeString('en-US', { 
@@ -72,17 +183,130 @@ function setStatus(status: Status, text?: string): void {
   statusIndicator.className = `status-indicator ${status}`;
   statusText.textContent = text || status.charAt(0).toUpperCase() + status.slice(1);
   
-  // Update button states
   speakBtn.disabled = status === 'connecting' || status === 'streaming';
   stopBtn.disabled = status === 'ready' || status === 'error';
 }
 
-// Audio handling
+// ---------- Mode switching ----------
+
+function switchMode(mode: AppMode): void {
+  currentMode = mode;
+  
+  modeTabs.forEach(tab => {
+    tab.classList.toggle('active', tab.dataset.mode === mode);
+  });
+  
+  wsPanel.classList.toggle('hidden', mode !== 'websocket');
+  togetherPanel.classList.toggle('hidden', mode !== 'together');
+  
+  localStorage.setItem('tts_mode', mode);
+}
+
+function getVoicesForModel(model: string): string[] {
+  // Exact match first
+  if (MODEL_VOICES[model]) return MODEL_VOICES[model];
+  // For custom models, try matching by prefix (e.g. "cartesia/my-custom" → cartesia voices)
+  if (model.startsWith('cartesia/')) return CARTESIA_VOICES;
+  if (model.startsWith('canopylabs/')) return MODEL_VOICES['canopylabs/orpheus-3b-0.1-ft'];
+  if (model.startsWith('hexgrad/')) return MODEL_VOICES['hexgrad/Kokoro-82M'];
+  return [];
+}
+
+function getDefaultVoiceForModel(model: string): string {
+  if (MODEL_DEFAULT_VOICE[model]) return MODEL_DEFAULT_VOICE[model];
+  if (model.startsWith('cartesia/')) return 'sweet lady';
+  if (model.startsWith('canopylabs/')) return 'tara';
+  if (model.startsWith('hexgrad/')) return 'af_heart';
+  return '';
+}
+
+const CUSTOM_VALUE = '__custom__';
+
+/** Returns the effective model string (from select or custom input). */
+function getSelectedModel(): string {
+  if (togetherModelSelect.value === CUSTOM_VALUE) {
+    return togetherModelCustom.value.trim();
+  }
+  return togetherModelSelect.value;
+}
+
+function handleModelSelectChange(): void {
+  if (togetherModelSelect.value === CUSTOM_VALUE) {
+    togetherModelCustom.classList.remove('hidden');
+    togetherModelCustom.focus();
+  } else {
+    togetherModelCustom.classList.add('hidden');
+  }
+  updateVoiceSuggestions();
+  localStorage.setItem('together_model', getSelectedModel());
+}
+
+function updateVoiceSuggestions(): void {
+  const model = getSelectedModel();
+  const voices = getVoicesForModel(model);
+
+  // Remember state before rebuilding
+  const wasExplicitlyCustom = togetherVoiceSelect.value === CUSTOM_VALUE;
+  const previousVoice = getSelectedVoice();
+
+  // Rebuild the <select> options
+  togetherVoiceSelect.innerHTML = '';
+
+  voices.forEach(voice => {
+    const opt = document.createElement('option');
+    opt.value = voice;
+    opt.textContent = voice;
+    togetherVoiceSelect.appendChild(opt);
+  });
+
+  // Always add a "Custom…" option at the end
+  const customOpt = document.createElement('option');
+  customOpt.value = CUSTOM_VALUE;
+  customOpt.textContent = '— Custom —';
+  togetherVoiceSelect.appendChild(customOpt);
+
+  // Restore voice selection
+  if (previousVoice && voices.includes(previousVoice)) {
+    // Previous voice exists in the new model — keep it
+    togetherVoiceSelect.value = previousVoice;
+    togetherVoiceCustom.classList.add('hidden');
+  } else if (wasExplicitlyCustom && previousVoice) {
+    // User explicitly chose "Custom" and typed a value — preserve it
+    togetherVoiceSelect.value = CUSTOM_VALUE;
+    togetherVoiceCustom.value = previousVoice;
+    togetherVoiceCustom.classList.remove('hidden');
+  } else {
+    // Previous voice was a preset from another model — reset to new default
+    const defaultVoice = getDefaultVoiceForModel(model) || voices[0] || '';
+    togetherVoiceSelect.value = defaultVoice;
+    togetherVoiceCustom.classList.add('hidden');
+  }
+}
+
+function handleVoiceSelectChange(): void {
+  if (togetherVoiceSelect.value === CUSTOM_VALUE) {
+    togetherVoiceCustom.classList.remove('hidden');
+    togetherVoiceCustom.focus();
+  } else {
+    togetherVoiceCustom.classList.add('hidden');
+  }
+  localStorage.setItem('together_voice', getSelectedVoice());
+}
+
+/** Returns the effective voice value (from select or custom input). */
+function getSelectedVoice(): string {
+  if (togetherVoiceSelect.value === CUSTOM_VALUE) {
+    return togetherVoiceCustom.value.trim();
+  }
+  return togetherVoiceSelect.value;
+}
+
+// ---------- Audio handling ----------
+
 async function initAudio(): Promise<void> {
   if (!audioContext) {
     audioContext = new AudioContext({ sampleRate: DEFAULT_SAMPLE_RATE });
     
-    // Create analyser for visualization
     analyser = audioContext.createAnalyser();
     analyser.fftSize = 256;
     analyser.connect(audioContext.destination);
@@ -93,34 +317,49 @@ async function initAudio(): Promise<void> {
   }
 }
 
-function playAudioChunk(audioData: Float32Array): void {
+/**
+ * Schedule an audio chunk for gapless playback using the Web Audio clock.
+ *
+ * Instead of starting each buffer at "now" and using setTimeout to pace them
+ * (which causes gaps/overlaps → crackling), we track `nextStartTime` on the
+ * high-precision audio clock and schedule each buffer to begin exactly where
+ * the previous one ended.  This is the same principle the CLI uses via its
+ * sounddevice callback — sample-accurate sequencing with no JS-timer jitter.
+ */
+function scheduleAudioChunk(audioData: Float32Array): void {
   if (!audioContext || !analyser) return;
-  
-  // Create audio buffer
+
   const buffer = audioContext.createBuffer(AUDIO_CHANNELS, audioData.length, DEFAULT_SAMPLE_RATE);
   buffer.getChannelData(0).set(audioData);
-  
-  // Create source and connect to analyser
+
+  const now = audioContext.currentTime;
+
+  // If the scheduled time is in the past (first chunk, or an underrun gap),
+  // reset to "now" with a tiny look-ahead so the browser has time to enqueue.
+  if (nextStartTime < now) {
+    nextStartTime = now + 0.02;          // 20 ms look-ahead
+  }
+
   const source = audioContext.createBufferSource();
   source.buffer = buffer;
   source.connect(analyser);
-  source.start();
+  source.start(nextStartTime);
+
+  // Track so stopTTS() can cancel scheduled playback
+  activeSources.push(source);
+  source.onended = () => {
+    const idx = activeSources.indexOf(source);
+    if (idx !== -1) activeSources.splice(idx, 1);
+  };
+
+  nextStartTime += buffer.duration;      // seamlessly abut the next chunk
 }
 
-async function processAudioQueue(): Promise<void> {
-  if (isPlaying) return;
-  isPlaying = true;
-  
+function processAudioQueue(): void {
   while (audioQueue.length > 0) {
     const chunk = audioQueue.shift()!;
-    playAudioChunk(chunk);
-    
-    // Wait for chunk duration before playing next
-    const duration = (chunk.length / DEFAULT_SAMPLE_RATE) * 1000;
-    await new Promise(resolve => setTimeout(resolve, duration * 0.9)); // Slight overlap for smooth playback
+    scheduleAudioChunk(chunk);
   }
-  
-  isPlaying = false;
 }
 
 function decodeBase64Audio(base64: string): Float32Array {
@@ -132,12 +371,12 @@ function decodeBase64Audio(base64: string): Float32Array {
   return new Float32Array(bytes.buffer);
 }
 
-// Visualizer
+// ---------- Visualizer ----------
+
 function setupVisualizer(): void {
   const canvas = visualizerCanvas;
   const ctx = canvas.getContext('2d')!;
   
-  // Set canvas size
   const rect = canvas.getBoundingClientRect();
   canvas.width = rect.width * window.devicePixelRatio;
   canvas.height = rect.height * window.devicePixelRatio;
@@ -149,7 +388,6 @@ function setupVisualizer(): void {
     const width = rect.width;
     const height = rect.height;
     
-    // Clear canvas
     ctx.fillStyle = '#18181B';
     ctx.fillRect(0, 0, width, height);
     
@@ -158,12 +396,10 @@ function setupVisualizer(): void {
       return;
     }
     
-    // Get frequency data
     const bufferLength = analyser.frequencyBinCount;
     const dataArray = new Uint8Array(bufferLength);
     analyser.getByteFrequencyData(dataArray);
     
-    // Check if there's audio activity
     const hasActivity = dataArray.some(v => v > 10);
     
     if (!hasActivity) {
@@ -171,7 +407,6 @@ function setupVisualizer(): void {
       return;
     }
     
-    // Draw frequency bars
     const barWidth = width / bufferLength * 2.5;
     let x = 0;
     
@@ -207,15 +442,91 @@ function stopVisualizer(): void {
   }
 }
 
-// WebSocket handling
+// ---------- WebSocket handling ----------
+
 function getBackendWsUrl(): string {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${protocol}//${window.location.host}/ws/tts`;
 }
 
-async function connect(config: TTSConfig): Promise<void> {
+function handleMessage(data: TTSMessage, resolveConnect?: (value: void) => void): void {
+  switch (data.type) {
+    case 'ready':
+      log('Backend ready', 'success');
+      setStatus('connected', 'Connected');
+      resolveConnect?.();
+      break;
+      
+    case 'session.created':
+      log(`TTS session created (language: ${data.language}, format: ${data.format})`, 'success');
+      break;
+      
+    case 'ttfb': {
+      const ttfbMs = data.ttfb_ms as number;
+      log(`\u26A1 TTFB: ${ttfbMs.toFixed(0)}ms`, 'success');
+
+      // Show the prominent TTFB banner
+      ttfbValue.textContent = `${ttfbMs.toFixed(0)}ms`;
+      ttfbValue.className = 'ttfb-value ' + (ttfbMs < 200 ? 'fast' : ttfbMs < 500 ? 'medium' : 'slow');
+      ttfbBanner.classList.remove('hidden');
+      ttfbBanner.classList.add('highlight');
+      // Remove highlight border after a moment, keep the value visible
+      setTimeout(() => ttfbBanner.classList.remove('highlight'), 2000);
+      break;
+    }
+      
+    case 'audio.chunk': {
+      const audioB64 = data.audio as string;
+      if (audioB64) {
+        const audioData = decodeBase64Audio(audioB64);
+        const duration = audioData.length / DEFAULT_SAMPLE_RATE;
+        log(`Received ${duration.toFixed(2)}s of audio`, 'audio');
+        
+        audioQueue.push(audioData);
+        processAudioQueue();
+        
+        setStatus('streaming', 'Playing audio...');
+        
+        if (data.isFinal) {
+          log('Audio stream complete', 'success');
+          setTimeout(() => {
+            if (currentStatus === 'streaming') {
+              setStatus('ready');
+            }
+          }, 1000);
+        }
+      } else if (data.isFinal) {
+        log('Audio stream complete', 'success');
+        setTimeout(() => {
+          if (currentStatus === 'streaming') {
+            setStatus('ready');
+          }
+        }, 1000);
+      }
+      break;
+    }
+      
+    case 'error': {
+      const errorMsg = data.message as string || 'Unknown error';
+      log(`Error: ${errorMsg}`, 'error');
+      setStatus('error', 'Error');
+      break;
+    }
+      
+    case 'timeout':
+      log('Waiting for TTS worker...', 'info');
+      break;
+      
+    default:
+      log(`Unknown message type: ${data.type}`, 'info');
+  }
+}
+
+async function connectAndSend(configPayload: Record<string, unknown>, text: string, language: string): Promise<void> {
   setStatus('connecting', 'Connecting to backend...');
-  log(`Connecting to TTS server: ${config.ws_url}`);
+  
+  const modeLabel = configPayload.mode === 'together' ? 'Together API' : 'WebSocket';
+  log(`Starting ${modeLabel} TTS session...`);
   
   return new Promise((resolve, reject) => {
     try {
@@ -223,28 +534,38 @@ async function connect(config: TTSConfig): Promise<void> {
       
       websocket.onopen = () => {
         log('Connected to backend, sending config...', 'info');
-        
-        // Send config to backend
-        websocket!.send(JSON.stringify({
-          type: 'config',
-          ws_url: config.ws_url,
-          api_key: config.api_key || undefined,
-          language: config.language,
-          sample_rate: config.sample_rate,
-        }));
+        websocket!.send(JSON.stringify(configPayload));
       };
       
       websocket.onmessage = async (event) => {
         try {
           const data: TTSMessage = JSON.parse(event.data);
-          handleMessage(data, resolve);
+          
+          if (data.type === 'ready') {
+            handleMessage(data);
+            
+            // Send TTS commands
+            log(`Opening TTS session (language: ${language})`);
+            websocket!.send(JSON.stringify({ type: 'open', language }));
+            
+            log(`Sending text (${text.length} chars)`);
+            websocket!.send(JSON.stringify({ type: 'text', text }));
+            
+            log('Sending end-of-stream');
+            websocket!.send(JSON.stringify({ type: 'eos' }));
+            
+            setStatus('streaming', 'Waiting for audio...');
+            resolve();
+          } else {
+            handleMessage(data);
+          }
         } catch (e) {
           log(`Failed to parse message: ${e}`, 'error');
         }
       };
       
       websocket.onerror = (event) => {
-        log(`WebSocket error`, 'error');
+        log('WebSocket error', 'error');
         console.error('WebSocket error:', event);
         setStatus('error', 'Connection error');
         reject(new Error('WebSocket error'));
@@ -266,80 +587,42 @@ async function connect(config: TTSConfig): Promise<void> {
   });
 }
 
-function handleMessage(data: TTSMessage, resolveConnect?: (value: void) => void): void {
-  switch (data.type) {
-    case 'ready':
-      log('Backend connected to TTS server', 'success');
-      setStatus('connected', 'Connected');
-      resolveConnect?.();
-      break;
-      
-    case 'session.created':
-      log(`TTS session created (language: ${data.language}, format: ${data.format})`, 'success');
-      break;
-      
-    case 'audio.chunk':
-      const audioB64 = data.audio as string;
-      if (audioB64) {
-        const audioData = decodeBase64Audio(audioB64);
-        const duration = audioData.length / DEFAULT_SAMPLE_RATE;
-        log(`Received ${duration.toFixed(2)}s of audio`, 'audio');
-        
-        audioQueue.push(audioData);
-        processAudioQueue();
-        
-        setStatus('streaming', 'Playing audio...');
-        
-        if (data.isFinal) {
-          log('Audio stream complete', 'success');
-          setTimeout(() => {
-            if (currentStatus === 'streaming') {
-              setStatus('ready');
-            }
-          }, 1000);
-        }
-      }
-      break;
-      
-    case 'error':
-      const errorMsg = data.message as string || 'Unknown error';
-      log(`Error: ${errorMsg}`, 'error');
-      setStatus('error', 'Error');
-      break;
-      
-    case 'timeout':
-      log('Waiting for TTS worker...', 'info');
-      break;
-      
-    default:
-      log(`Unknown message type: ${data.type}`, 'info');
-  }
-}
+// ---------- TTS entry points ----------
 
 async function startTTS(): Promise<void> {
-  const wsUrl = wsUrlInput.value.trim();
-  const apiKey = apiKeyInput.value.trim();
-  const language = languageInput.value.trim() || 'en';
   const text = textInput.value.trim();
-  
-  if (!wsUrl) {
-    log('Please enter a WebSocket URL', 'error');
-    return;
-  }
   
   if (!text) {
     log('Please enter text to synthesize', 'error');
     return;
   }
   
-  // Initialize audio
   await initAudio();
-  
-  // Clear audio queue
   audioQueue = [];
+  activeSources = [];
+  nextStartTime = 0;                    // reset scheduler for new utterance
+  ttfbBanner.classList.add('hidden');    // hide stale TTFB from previous run
   
-  // Connect to backend
-  const config: TTSConfig = {
+  if (currentMode === 'together') {
+    await startTogetherTTS(text);
+  } else {
+    await startWebSocketTTS(text);
+  }
+}
+
+async function startWebSocketTTS(text: string): Promise<void> {
+  const wsUrl = wsUrlInput.value.trim();
+  const apiKey = apiKeyInput.value.trim();
+  const language = languageInput.value.trim() || 'en';
+  
+  if (!wsUrl) {
+    log('Please enter a WebSocket URL', 'error');
+    return;
+  }
+  
+  const configPayload = {
+    type: 'config',
+    mode: 'websocket',
     ws_url: wsUrl,
     api_key: apiKey || undefined,
     language,
@@ -347,20 +630,40 @@ async function startTTS(): Promise<void> {
   };
   
   try {
-    await connect(config);
-    
-    // Send TTS commands
-    log(`Opening TTS session (language: ${language})`);
-    websocket!.send(JSON.stringify({ type: 'open', language }));
-    
-    log(`Sending text (${text.length} chars)`);
-    websocket!.send(JSON.stringify({ type: 'text', text }));
-    
-    log('Sending end-of-stream');
-    websocket!.send(JSON.stringify({ type: 'eos' }));
-    
-    setStatus('streaming', 'Waiting for audio...');
-    
+    await connectAndSend(configPayload, text, language);
+  } catch (e) {
+    log(`Failed to start TTS: ${e}`, 'error');
+  }
+}
+
+async function startTogetherTTS(text: string): Promise<void> {
+  const model = getSelectedModel();
+  const voice = getSelectedVoice();
+  const apiKey = togetherApiKeyInput.value.trim();
+  
+  if (!apiKey) {
+    log('Please enter your Together API key', 'error');
+    return;
+  }
+  
+  if (!voice) {
+    log('Please enter a voice name', 'error');
+    return;
+  }
+  
+  log(`Model: ${model}, Voice: ${voice}`);
+  
+  const configPayload = {
+    type: 'config',
+    mode: 'together',
+    model,
+    voice,
+    api_key: apiKey,
+    sample_rate: DEFAULT_SAMPLE_RATE,
+  };
+  
+  try {
+    await connectAndSend(configPayload, text, 'en');
   } catch (e) {
     log(`Failed to start TTS: ${e}`, 'error');
   }
@@ -372,18 +675,41 @@ function stopTTS(): void {
     websocket = null;
   }
   
+  // Stop all scheduled audio sources immediately
+  for (const src of activeSources) {
+    try { src.stop(); } catch { /* already stopped */ }
+  }
+  activeSources = [];
+
   audioQueue = [];
-  isPlaying = false;
+  nextStartTime = 0;
   setStatus('ready');
   log('TTS stopped', 'info');
 }
 
-// Event handlers
+// ---------- Event handlers ----------
+
 speakBtn.addEventListener('click', startTTS);
 stopBtn.addEventListener('click', stopTTS);
 
 clearLogBtn.addEventListener('click', () => {
   logContainer.innerHTML = '';
+});
+
+// Mode tabs
+modeTabs.forEach(tab => {
+  tab.addEventListener('click', () => {
+    switchMode(tab.dataset.mode as AppMode);
+  });
+});
+
+// Model select + custom input
+togetherModelSelect.addEventListener('change', () => {
+  handleModelSelectChange();
+});
+togetherModelCustom.addEventListener('input', () => {
+  updateVoiceSuggestions();
+  localStorage.setItem('together_model', getSelectedModel());
 });
 
 // Handle Enter key in text input (Cmd/Ctrl + Enter to speak)
@@ -396,20 +722,61 @@ textInput.addEventListener('keydown', (e) => {
   }
 });
 
-// Initialize
+// ---------- Initialization ----------
+
 document.addEventListener('DOMContentLoaded', () => {
   setupVisualizer();
   setStatus('ready');
-  log('Voice demo ready. Enter a WebSocket URL and text to begin.', 'info');
+  log('Voice demo ready. Choose a mode and enter text to begin.', 'info');
   
   // Load saved values from localStorage
   const savedUrl = localStorage.getItem('tts_ws_url');
   const savedApiKey = localStorage.getItem('tts_api_key');
   const savedLanguage = localStorage.getItem('tts_language');
+  const savedMode = localStorage.getItem('tts_mode') as AppMode | null;
+  const savedModel = localStorage.getItem('together_model');
+  const savedTogetherKey = localStorage.getItem('together_api_key');
+  const savedVoice = localStorage.getItem('together_voice');
   
   if (savedUrl) wsUrlInput.value = savedUrl;
   if (savedApiKey) apiKeyInput.value = savedApiKey;
   if (savedLanguage) languageInput.value = savedLanguage;
+  if (savedTogetherKey) togetherApiKeyInput.value = savedTogetherKey;
+
+  // Restore saved model (may be a preset or custom)
+  if (savedModel) {
+    // Check if it matches a preset <option>
+    const presetValues = Array.from(togetherModelSelect.options).map(o => o.value);
+    if (presetValues.includes(savedModel)) {
+      togetherModelSelect.value = savedModel;
+      togetherModelCustom.classList.add('hidden');
+    } else {
+      togetherModelSelect.value = CUSTOM_VALUE;
+      togetherModelCustom.value = savedModel;
+      togetherModelCustom.classList.remove('hidden');
+    }
+  }
+  
+  // Populate voice options for the current model
+  updateVoiceSuggestions();
+  
+  // Restore saved voice after populating options
+  if (savedVoice) {
+    const voices = getVoicesForModel(getSelectedModel());
+    if (voices.includes(savedVoice)) {
+      togetherVoiceSelect.value = savedVoice;
+      togetherVoiceCustom.classList.add('hidden');
+    } else {
+      togetherVoiceSelect.value = CUSTOM_VALUE;
+      togetherVoiceCustom.value = savedVoice;
+      togetherVoiceCustom.classList.remove('hidden');
+    }
+  }
+  
+  // Restore mode
+  if (savedMode && (savedMode === 'websocket' || savedMode === 'together')) {
+    switchMode(savedMode);
+  }
 });
 
 // Save values to localStorage on change
@@ -423,6 +790,18 @@ apiKeyInput.addEventListener('change', () => {
 
 languageInput.addEventListener('change', () => {
   localStorage.setItem('tts_language', languageInput.value);
+});
+
+togetherApiKeyInput.addEventListener('change', () => {
+  localStorage.setItem('together_api_key', togetherApiKeyInput.value);
+});
+
+togetherVoiceSelect.addEventListener('change', () => {
+  handleVoiceSelectChange();
+});
+
+togetherVoiceCustom.addEventListener('input', () => {
+  localStorage.setItem('together_voice', togetherVoiceCustom.value);
 });
 
 // Handle window resize for visualizer

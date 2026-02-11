@@ -19,33 +19,98 @@
 
       <main class="main">
         <section class="config-section">
-          <div class="input-group">
-            <label for="ws-url">WebSocket URL</label>
-            <input 
-              type="text" 
-              id="ws-url" 
-              placeholder="wss://api.together.ai/v1/deployment-request/your-deployment/v1/tts/ws"
-              spellcheck="false"
-            />
+          <!-- Mode toggle tabs -->
+          <div class="mode-tabs">
+            <button class="mode-tab active" data-mode="websocket">
+              <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M5 12h14M12 5l7 7-7 7"/>
+              </svg>
+              WebSocket
+            </button>
+            <button class="mode-tab" data-mode="together">
+              <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M8 12h8M12 8v8"/>
+              </svg>
+              Together API
+            </button>
           </div>
-          
-          <div class="input-row">
+
+          <!-- WebSocket mode panel -->
+          <div class="mode-panel" id="ws-panel">
             <div class="input-group">
-              <label for="api-key">API Key <span class="optional">(optional)</span></label>
+              <label for="ws-url">WebSocket URL</label>
               <input 
-                type="password" 
-                id="api-key" 
-                placeholder="Bearer token for authentication"
+                type="text" 
+                id="ws-url" 
+                placeholder="wss://api.together.ai/v1/deployment-request/your-deployment/v1/tts/ws"
+                spellcheck="false"
               />
             </div>
             
-            <div class="input-group input-small">
-              <label for="language">Language</label>
+            <div class="input-row">
+              <div class="input-group">
+                <label for="api-key">API Key <span class="optional">(optional)</span></label>
+                <input 
+                  type="password" 
+                  id="api-key" 
+                  placeholder="Bearer token for authentication"
+                />
+              </div>
+              
+              <div class="input-group input-small">
+                <label for="language">Language</label>
+                <input 
+                  type="text" 
+                  id="language" 
+                  value="en"
+                  placeholder="en"
+                />
+              </div>
+            </div>
+          </div>
+
+          <!-- Together API mode panel -->
+          <div class="mode-panel hidden" id="together-panel">
+            <div class="input-row">
+              <div class="input-group">
+                <label for="together-model-select">Model</label>
+                <select id="together-model-select">
+                  <option value="canopylabs/orpheus-3b-0.1-ft">Orpheus 3B (canopylabs/orpheus-3b-0.1-ft)</option>
+                  <option value="hexgrad/Kokoro-82M">Kokoro 82M (hexgrad/Kokoro-82M)</option>
+                  <option value="cartesia/sonic-3">Cartesia Sonic 3 (cartesia/sonic-3)</option>
+                  <option value="cartesia/sonic-2">Cartesia Sonic 2 (cartesia/sonic-2)</option>
+                  <option value="cartesia/sonic">Cartesia Sonic (cartesia/sonic)</option>
+                  <option value="__custom__">— Custom —</option>
+                </select>
+                <input
+                  type="text"
+                  id="together-model-custom"
+                  class="hidden"
+                  placeholder="e.g. my-org/my-model"
+                  spellcheck="false"
+                />
+              </div>
+              
+              <div class="input-group">
+                <label for="together-voice-select">Voice</label>
+                <select id="together-voice-select"></select>
+                <input
+                  type="text"
+                  id="together-voice-custom"
+                  class="hidden"
+                  placeholder="Enter custom voice name"
+                  spellcheck="false"
+                />
+              </div>
+            </div>
+            
+            <div class="input-group">
+              <label for="together-api-key">Together API Key</label>
               <input 
-                type="text" 
-                id="language" 
-                value="en"
-                placeholder="en"
+                type="password" 
+                id="together-api-key" 
+                placeholder="Your Together AI API key"
               />
             </div>
           </div>
@@ -82,6 +147,17 @@
           <div class="status-header">
             <div class="status-indicator" id="status-indicator"></div>
             <span id="status-text">Ready</span>
+          </div>
+
+          <!-- Prominent TTFB display — hidden until a value arrives -->
+          <div class="ttfb-banner hidden" id="ttfb-banner">
+            <div class="ttfb-label">
+              <svg class="ttfb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+              </svg>
+              Time to First Byte
+            </div>
+            <div class="ttfb-value" id="ttfb-value">—</div>
           </div>
           
           <div class="audio-visualizer" id="visualizer">
