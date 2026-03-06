@@ -132,7 +132,7 @@ let activeSources: AudioBufferSourceNode[] = [];
 let asrWebSocket: WebSocket | null = null;
 let asrMediaStream: MediaStream | null = null;
 let asrAudioContext: AudioContext | null = null;
-let asrScriptProcessor: ScriptProcessorNode | null = null;
+let asrWorkletNode: AudioWorkletNode | null = null;
 let asrStatus: Status = 'ready';
 let asrIsRecording = false;
 
@@ -749,7 +749,6 @@ function stopTTS(): void {
 // ---------- ASR handling ----------
 
 const ASR_SAMPLE_RATE = 24000;
-const ASR_BUFFER_SIZE = 4096;
 
 function getAsrBackendWsUrl(): string {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -861,7 +860,10 @@ async function startASR(): Promise<void> {
           setAsrStatus('streaming', 'Listening...');
           asrIsRecording = true;
           asrStartBtn.classList.add('recording');
-          startMicCapture();
+          startMicCapture().catch(e => {
+            asrLog(`Mic capture failed: ${e}`, 'error');
+            setAsrStatus('error', 'Mic error');
+          });
         } else if (eventType === 'conversation.item.input_audio_transcription.delta') {
           const delta = data.delta || '';
           if (delta) {
@@ -905,29 +907,46 @@ async function startASR(): Promise<void> {
   }
 }
 
-function startMicCapture(): void {
+const PCM_WORKLET_CODE = `
+class PCMProcessor extends AudioWorkletProcessor {
+  process(inputs) {
+    const input = inputs[0];
+    if (input && input[0] && input[0].length > 0) {
+      this.port.postMessage(input[0]);
+    }
+    return true;
+  }
+}
+registerProcessor('pcm-processor', PCMProcessor);
+`;
+
+async function startMicCapture(): Promise<void> {
   if (!asrMediaStream) return;
 
   asrAudioContext = new AudioContext({ sampleRate: ASR_SAMPLE_RATE });
-  const source = asrAudioContext.createMediaStreamSource(asrMediaStream);
 
-  // ScriptProcessorNode is deprecated but simple and fine for a demo
-  asrScriptProcessor = asrAudioContext.createScriptProcessor(ASR_BUFFER_SIZE, 1, 1);
-  asrScriptProcessor.onaudioprocess = (e) => {
+  const blob = new Blob([PCM_WORKLET_CODE], { type: 'application/javascript' });
+  const url = URL.createObjectURL(blob);
+  await asrAudioContext.audioWorklet.addModule(url);
+  URL.revokeObjectURL(url);
+
+  const source = asrAudioContext.createMediaStreamSource(asrMediaStream);
+  asrWorkletNode = new AudioWorkletNode(asrAudioContext, 'pcm-processor');
+
+  asrWorkletNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
     if (!asrIsRecording || !asrWebSocket || asrWebSocket.readyState !== WebSocket.OPEN) return;
-    const inputData = e.inputBuffer.getChannelData(0);
-    const b64 = float32ToInt16Base64(inputData);
+    const b64 = float32ToInt16Base64(e.data);
     asrWebSocket.send(JSON.stringify({ type: 'audio', audio: b64 }));
   };
 
-  source.connect(asrScriptProcessor);
-  asrScriptProcessor.connect(asrAudioContext.destination);
+  source.connect(asrWorkletNode);
+  asrWorkletNode.connect(asrAudioContext.destination);
 }
 
 function stopMicCapture(): void {
-  if (asrScriptProcessor) {
-    asrScriptProcessor.disconnect();
-    asrScriptProcessor = null;
+  if (asrWorkletNode) {
+    asrWorkletNode.disconnect();
+    asrWorkletNode = null;
   }
   if (asrAudioContext) {
     asrAudioContext.close();

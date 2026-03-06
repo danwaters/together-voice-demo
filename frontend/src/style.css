@@ -12,9 +12,9 @@
   --bg-tertiary: #18181B;
   --bg-elevated: #1F1F23;
   
-  --text-primary: #FAFAFA;
-  --text-secondary: #A1A1AA;
-  --text-tertiary: #71717A;
+  --text-primary: #FFFFFF;
+  --text-secondary: #B4B4BC;
+  --text-tertiary: #85858F;
   
   --border-color: #27272A;
   --border-focus: var(--together-blue);
@@ -53,7 +53,7 @@ html, body {
 
 body {
   font-family: var(--font-sans);
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.6;
   color: var(--text-primary);
   background: var(--bg-primary);
@@ -242,8 +242,8 @@ section {
 }
 
 label {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 14px;
+  font-weight: 600;
   color: var(--text-secondary);
   display: flex;
   align-items: center;
@@ -583,14 +583,14 @@ select option {
 
 /* ASR Transcript area */
 .transcript-area {
-  font-family: var(--font-mono);
-  font-size: 15px;
-  line-height: 1.8;
+  font-family: var(--font-sans);
+  font-size: 20px;
+  line-height: 1.7;
   background: var(--bg-tertiary);
   border-radius: 8px;
-  padding: var(--space-lg);
-  min-height: 200px;
-  max-height: 400px;
+  padding: var(--space-lg) var(--space-xl);
+  min-height: 240px;
+  max-height: 500px;
   overflow-y: auto;
   color: var(--text-primary);
 }
@@ -598,20 +598,21 @@ select option {
 .transcript-placeholder {
   color: var(--text-tertiary);
   font-style: italic;
+  font-size: 16px;
 }
 
 .transcript-segment {
-  margin-bottom: var(--space-xs);
+  margin-bottom: var(--space-sm);
 }
 
 .transcript-partial {
-  color: var(--text-tertiary);
+  color: #A1A1AA;
   font-style: italic;
 }
 
 .transcript-final {
-  color: var(--text-primary);
-  font-weight: 500;
+  color: #FFFFFF;
+  font-weight: 600;
 }
 
 /* ASR mic pulse animation */
