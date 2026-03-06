@@ -1,10 +1,10 @@
 """
 Together AI Voice Demo - Backend Server
 
-A FastAPI WebSocket proxy for testing TTS backends.
-The backend acts as a bridge between the browser and various TTS WebSocket servers,
-handling protocol translation as needed. Also supports Together REST API mode
-for streaming TTS via the Together AI audio/speech endpoint.
+A FastAPI WebSocket proxy for testing TTS and ASR backends.
+The backend acts as a bridge between the browser and various voice API servers,
+handling protocol translation as needed. Supports Together REST API mode
+for streaming TTS, and a WebSocket proxy for streaming ASR (speech-to-text).
 """
 
 import array
@@ -424,6 +424,198 @@ async def websocket_tts_proxy(websocket: WebSocket):
         logger.info("🔌 Session ended")
 
 
+# ---------- ASR WebSocket proxy ----------
+
+TOGETHER_REALTIME_URL = "wss://api.together.ai/v1/deployment-request/{deployment_id}/v1/realtime"
+
+
+async def asr_forward_to_client(client_ws: WebSocket, upstream_ws, language: str):
+    """Forward transcription events from upstream ASR to browser."""
+    try:
+        async for message in upstream_ws:
+            if not isinstance(message, str):
+                continue
+            try:
+                data = json.loads(message)
+            except json.JSONDecodeError:
+                continue
+
+            event_type = data.get("type", "")
+
+            if event_type == "transcription_session.created":
+                # Auto-configure the session on behalf of the browser
+                session_update = {
+                    "type": "transcription_session.update",
+                    "session": {
+                        "input_audio_format": "pcm16",
+                        "input_audio_sample_rate": 24000,
+                        "input_audio_number_of_channels": 1,
+                        "input_audio_transcription": {
+                            "language": language,
+                            "target_language": language,
+                        },
+                    },
+                }
+                await upstream_ws.send(json.dumps(session_update))
+                logger.info("📡 ASR session created, sending config...")
+
+            elif event_type == "transcription_session.updated":
+                logger.info("✓ ASR session configured")
+                await client_ws.send_json({"type": "ready"})
+
+            elif event_type in (
+                "conversation.item.input_audio_transcription.delta",
+                "conversation.item.input_audio_transcription.completed",
+            ):
+                await client_ws.send_json(data)
+
+            elif event_type == "error":
+                error = data.get("error", {})
+                logger.error(f"❌ ASR error: {error}")
+                await client_ws.send_json({
+                    "type": "error",
+                    "message": f"[{error.get('code', '?')}] {error.get('message', str(data))}",
+                })
+
+            elif event_type == "timeout":
+                await client_ws.send_json({"type": "timeout"})
+
+            # Silently ignore other event types (committed, conversation.item.created, etc.)
+
+    except websockets.ConnectionClosed as e:
+        logger.info(f"ASR upstream closed: {e}")
+        try:
+            await client_ws.send_json({
+                "type": "error",
+                "message": f"ASR server disconnected: {e.reason or 'Connection closed'}",
+            })
+        except Exception:
+            pass
+    except Exception as e:
+        logger.error(f"ASR forward error: {e}")
+
+
+async def asr_forward_to_upstream(client_ws: WebSocket, upstream_ws):
+    """Forward audio chunks from browser to upstream ASR."""
+    try:
+        while True:
+            data = await client_ws.receive_json()
+            msg_type = data.get("type", "")
+
+            if msg_type == "audio":
+                # Repackage as the upstream protocol expects
+                await upstream_ws.send(json.dumps({
+                    "type": "input_audio_buffer.append",
+                    "audio": data.get("audio", ""),
+                }))
+
+            elif msg_type == "commit":
+                await upstream_ws.send(json.dumps({
+                    "type": "input_audio_buffer.commit",
+                }))
+
+            elif msg_type == "stop":
+                await upstream_ws.send(json.dumps({
+                    "type": "input_audio_buffer.commit",
+                }))
+                break
+
+    except WebSocketDisconnect:
+        logger.info("ASR client disconnected")
+    except Exception as e:
+        logger.error(f"ASR forward to upstream error: {e}")
+
+
+@app.websocket("/ws/asr")
+async def websocket_asr_proxy(websocket: WebSocket):
+    """
+    WebSocket endpoint that proxies ASR requests.
+
+    Protocol:
+    1. Client sends config: {"type": "config", "deployment_id": "...", "api_key": "...", "language": "en"}
+    2. Backend connects to upstream, configures session, sends {"type": "ready"}
+    3. Client streams audio: {"type": "audio", "audio": "<base64 pcm16>"}
+    4. Backend forwards transcription events back to client
+    5. Client sends {"type": "stop"} to end
+    """
+    await websocket.accept()
+    logger.info("🎙️ ASR client connected")
+
+    upstream_ws = None
+    try:
+        config_msg = await websocket.receive_json()
+
+        if config_msg.get("type") != "config":
+            await websocket.send_json({
+                "type": "error",
+                "message": "First message must be config",
+            })
+            return
+
+        deployment_id = config_msg.get("deployment_id", "")
+        api_key = config_msg.get("api_key", "")
+        language = config_msg.get("language", "en")
+
+        if not deployment_id:
+            await websocket.send_json({
+                "type": "error",
+                "message": "deployment_id is required",
+            })
+            return
+
+        ws_url = TOGETHER_REALTIME_URL.format(deployment_id=deployment_id)
+        logger.info(f"📡 Connecting to ASR: {ws_url}")
+
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        try:
+            upstream_ws = await websockets.connect(
+                ws_url,
+                additional_headers=headers if headers else None,
+            )
+            logger.info("✓ Connected to ASR server")
+        except Exception as e:
+            logger.error(f"Failed to connect to ASR server: {e}")
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Failed to connect to ASR server: {e}",
+            })
+            return
+
+        # Bidirectional forwarding
+        forward_task = asyncio.create_task(
+            asr_forward_to_client(websocket, upstream_ws, language)
+        )
+
+        try:
+            await asr_forward_to_upstream(websocket, upstream_ws)
+        finally:
+            forward_task.cancel()
+            try:
+                await forward_task
+            except asyncio.CancelledError:
+                pass
+
+    except WebSocketDisconnect:
+        logger.info("ASR client disconnected")
+    except Exception as e:
+        logger.error(f"ASR WebSocket error: {e}")
+        try:
+            await websocket.send_json({"type": "error", "message": str(e)})
+        except Exception:
+            pass
+    finally:
+        if upstream_ws:
+            try:
+                await upstream_ws.send(json.dumps({"type": "input_audio_buffer.commit"}))
+            except Exception:
+                pass
+            await upstream_ws.close()
+        logger.info("🎙️ ASR session ended")
+
+
 @app.get("/health")
 async def health():
     """Health check endpoint."""
@@ -441,4 +633,4 @@ except Exception:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8800)

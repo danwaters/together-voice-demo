@@ -1,11 +1,10 @@
 /**
  * Together AI Voice Demo - Frontend Client
  * 
- * Supports two modes:
- *  - WebSocket: Connects to the backend WebSocket proxy, which forwards requests
- *    to the configured TTS server and streams audio back.
- *  - Together API: Uses the Together AI REST API (via the backend) for TTS with
- *    streaming support and TTFB measurement.
+ * Two top-level features:
+ *  - Text to Speech (TTS): WebSocket proxy mode or Together REST API mode.
+ *  - Speech to Text (ASR): Streams microphone audio to an ASR deployment via
+ *    the backend WebSocket proxy and displays live transcription.
  */
 
 import './style.css';
@@ -33,6 +32,7 @@ interface TTSMessage {
 }
 
 type AppMode = 'websocket' | 'together';
+type FeatureView = 'tts' | 'asr';
 type Status = 'ready' | 'connecting' | 'connected' | 'streaming' | 'error';
 
 // ---------- Voice definitions per model ----------
@@ -115,6 +115,7 @@ const AUDIO_CHANNELS = 1;
 
 // ---------- State ----------
 
+let currentFeature: FeatureView = 'tts';
 let currentMode: AppMode = 'websocket';
 let websocket: WebSocket | null = null;
 let audioContext: AudioContext | null = null;
@@ -127,9 +128,22 @@ let nextStartTime = 0;
 /** Active audio sources so we can stop them on demand. */
 let activeSources: AudioBufferSourceNode[] = [];
 
+// ASR state
+let asrWebSocket: WebSocket | null = null;
+let asrMediaStream: MediaStream | null = null;
+let asrAudioContext: AudioContext | null = null;
+let asrScriptProcessor: ScriptProcessorNode | null = null;
+let asrStatus: Status = 'ready';
+let asrIsRecording = false;
+
 // ---------- DOM Elements ----------
 
-// Mode tabs
+// Feature tabs (TTS / ASR)
+const featureTabs = document.querySelectorAll<HTMLButtonElement>('.feature-tab');
+const ttsView = document.getElementById('tts-view') as HTMLElement;
+const asrView = document.getElementById('asr-view') as HTMLElement;
+
+// TTS Mode tabs
 const modeTabs = document.querySelectorAll<HTMLButtonElement>('.mode-tab');
 const wsPanel = document.getElementById('ws-panel') as HTMLDivElement;
 const togetherPanel = document.getElementById('together-panel') as HTMLDivElement;
@@ -146,7 +160,7 @@ const togetherVoiceSelect = document.getElementById('together-voice-select') as 
 const togetherVoiceCustom = document.getElementById('together-voice-custom') as HTMLInputElement;
 const togetherApiKeyInput = document.getElementById('together-api-key') as HTMLInputElement;
 
-// Shared
+// TTS shared
 const textInput = document.getElementById('text-input') as HTMLTextAreaElement;
 const speakBtn = document.getElementById('speak-btn') as HTMLButtonElement;
 const stopBtn = document.getElementById('stop-btn') as HTMLButtonElement;
@@ -157,6 +171,18 @@ const ttfbValue = document.getElementById('ttfb-value') as HTMLDivElement;
 const logContainer = document.getElementById('log') as HTMLDivElement;
 const clearLogBtn = document.getElementById('clear-log') as HTMLButtonElement;
 const visualizerCanvas = document.getElementById('visualizer-canvas') as HTMLCanvasElement;
+
+// ASR elements
+const asrDeploymentIdInput = document.getElementById('asr-deployment-id') as HTMLInputElement;
+const asrLanguageInput = document.getElementById('asr-language') as HTMLInputElement;
+const asrApiKeyInput = document.getElementById('asr-api-key') as HTMLInputElement;
+const asrStartBtn = document.getElementById('asr-start-btn') as HTMLButtonElement;
+const asrStopBtn = document.getElementById('asr-stop-btn') as HTMLButtonElement;
+const asrStatusIndicator = document.getElementById('asr-status-indicator') as HTMLDivElement;
+const asrStatusText = document.getElementById('asr-status-text') as HTMLSpanElement;
+const asrTranscript = document.getElementById('asr-transcript') as HTMLDivElement;
+const asrLogContainer = document.getElementById('asr-log') as HTMLDivElement;
+const asrClearLogBtn = document.getElementById('asr-clear-log') as HTMLButtonElement;
 
 // ---------- Utilities ----------
 
@@ -187,7 +213,40 @@ function setStatus(status: Status, text?: string): void {
   stopBtn.disabled = status === 'ready' || status === 'error';
 }
 
-// ---------- Mode switching ----------
+// ---------- Feature switching (TTS / ASR) ----------
+
+function switchFeature(feature: FeatureView): void {
+  currentFeature = feature;
+
+  featureTabs.forEach(tab => {
+    tab.classList.toggle('active', tab.dataset.feature === feature);
+  });
+
+  ttsView.classList.toggle('hidden', feature !== 'tts');
+  asrView.classList.toggle('hidden', feature !== 'asr');
+
+  localStorage.setItem('feature_view', feature);
+}
+
+// ASR-specific log and status helpers
+function asrLog(message: string, type: 'info' | 'success' | 'error' = 'info'): void {
+  const entry = document.createElement('div');
+  entry.className = `log-entry ${type}`;
+  entry.innerHTML = `<span class="log-time">${formatTime()}</span><span class="log-msg">${message}</span>`;
+  asrLogContainer.appendChild(entry);
+  asrLogContainer.scrollTop = asrLogContainer.scrollHeight;
+}
+
+function setAsrStatus(status: Status, text?: string): void {
+  asrStatus = status;
+  asrStatusIndicator.className = `status-indicator ${status}`;
+  asrStatusText.textContent = text || status.charAt(0).toUpperCase() + status.slice(1);
+
+  asrStartBtn.disabled = status === 'connecting' || status === 'streaming';
+  asrStopBtn.disabled = status === 'ready' || status === 'error';
+}
+
+// ---------- TTS Mode switching ----------
 
 function switchMode(mode: AppMode): void {
   currentMode = mode;
@@ -687,8 +746,224 @@ function stopTTS(): void {
   log('TTS stopped', 'info');
 }
 
+// ---------- ASR handling ----------
+
+const ASR_SAMPLE_RATE = 24000;
+const ASR_BUFFER_SIZE = 4096;
+
+function getAsrBackendWsUrl(): string {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${window.location.host}/ws/asr`;
+}
+
+function float32ToInt16Base64(float32: Float32Array): string {
+  const int16 = new Int16Array(float32.length);
+  for (let i = 0; i < float32.length; i++) {
+    const s = Math.max(-1, Math.min(1, float32[i]));
+    int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+  }
+  const bytes = new Uint8Array(int16.buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+function clearTranscript(): void {
+  asrTranscript.innerHTML = '<div class="transcript-placeholder">Transcription will appear here...</div>';
+}
+
+let currentPartialDiv: HTMLDivElement | null = null;
+
+function appendTranscriptDelta(delta: string): void {
+  // Remove placeholder if present
+  const placeholder = asrTranscript.querySelector('.transcript-placeholder');
+  if (placeholder) placeholder.remove();
+
+  if (!currentPartialDiv) {
+    currentPartialDiv = document.createElement('div');
+    currentPartialDiv.className = 'transcript-segment transcript-partial';
+    asrTranscript.appendChild(currentPartialDiv);
+  }
+  currentPartialDiv.textContent += delta;
+  asrTranscript.scrollTop = asrTranscript.scrollHeight;
+}
+
+function finalizeTranscriptSegment(transcript: string): void {
+  const placeholder = asrTranscript.querySelector('.transcript-placeholder');
+  if (placeholder) placeholder.remove();
+
+  if (currentPartialDiv) {
+    currentPartialDiv.className = 'transcript-segment transcript-final';
+    currentPartialDiv.textContent = transcript || currentPartialDiv.textContent;
+    currentPartialDiv = null;
+  } else if (transcript) {
+    const div = document.createElement('div');
+    div.className = 'transcript-segment transcript-final';
+    div.textContent = transcript;
+    asrTranscript.appendChild(div);
+  }
+  asrTranscript.scrollTop = asrTranscript.scrollHeight;
+}
+
+async function startASR(): Promise<void> {
+  const deploymentId = asrDeploymentIdInput.value.trim();
+  const apiKey = asrApiKeyInput.value.trim();
+  const language = asrLanguageInput.value.trim() || 'en';
+
+  if (!deploymentId) {
+    asrLog('Please enter a Deployment ID', 'error');
+    return;
+  }
+
+  setAsrStatus('connecting', 'Connecting...');
+  asrLog('Starting ASR session...');
+  currentPartialDiv = null;
+
+  try {
+    // Request microphone access
+    asrMediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        sampleRate: ASR_SAMPLE_RATE,
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+      },
+    });
+    asrLog('Microphone access granted', 'success');
+  } catch (e) {
+    asrLog(`Microphone access denied: ${e}`, 'error');
+    setAsrStatus('error', 'Mic denied');
+    return;
+  }
+
+  try {
+    asrWebSocket = new WebSocket(getAsrBackendWsUrl());
+
+    asrWebSocket.onopen = () => {
+      asrLog('Connected to backend, sending config...');
+      asrWebSocket!.send(JSON.stringify({
+        type: 'config',
+        deployment_id: deploymentId,
+        api_key: apiKey,
+        language,
+      }));
+    };
+
+    asrWebSocket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        const eventType = data.type || '';
+
+        if (eventType === 'ready') {
+          asrLog('ASR session ready — listening...', 'success');
+          setAsrStatus('streaming', 'Listening...');
+          asrIsRecording = true;
+          asrStartBtn.classList.add('recording');
+          startMicCapture();
+        } else if (eventType === 'conversation.item.input_audio_transcription.delta') {
+          const delta = data.delta || '';
+          if (delta) {
+            appendTranscriptDelta(delta);
+          }
+        } else if (eventType === 'conversation.item.input_audio_transcription.completed') {
+          const transcript = data.transcript || '';
+          finalizeTranscriptSegment(transcript);
+          asrLog(`Segment: "${transcript.slice(0, 80)}${transcript.length > 80 ? '...' : ''}"`, 'success');
+        } else if (eventType === 'error') {
+          asrLog(`Error: ${data.message || 'Unknown error'}`, 'error');
+          setAsrStatus('error', 'Error');
+          stopASR();
+        } else if (eventType === 'timeout') {
+          asrLog('Waiting for ASR worker...');
+        }
+      } catch (e) {
+        asrLog(`Failed to parse message: ${e}`, 'error');
+      }
+    };
+
+    asrWebSocket.onerror = () => {
+      asrLog('WebSocket error', 'error');
+      setAsrStatus('error', 'Connection error');
+    };
+
+    asrWebSocket.onclose = (event) => {
+      asrLog(`Connection closed: ${event.reason || 'Disconnected'}`);
+      if (asrStatus !== 'error') {
+        setAsrStatus('ready');
+      }
+      stopMicCapture();
+      asrStartBtn.classList.remove('recording');
+      asrIsRecording = false;
+      asrWebSocket = null;
+    };
+  } catch (e) {
+    asrLog(`Failed to connect: ${e}`, 'error');
+    setAsrStatus('error', 'Failed to connect');
+    stopMicCapture();
+  }
+}
+
+function startMicCapture(): void {
+  if (!asrMediaStream) return;
+
+  asrAudioContext = new AudioContext({ sampleRate: ASR_SAMPLE_RATE });
+  const source = asrAudioContext.createMediaStreamSource(asrMediaStream);
+
+  // ScriptProcessorNode is deprecated but simple and fine for a demo
+  asrScriptProcessor = asrAudioContext.createScriptProcessor(ASR_BUFFER_SIZE, 1, 1);
+  asrScriptProcessor.onaudioprocess = (e) => {
+    if (!asrIsRecording || !asrWebSocket || asrWebSocket.readyState !== WebSocket.OPEN) return;
+    const inputData = e.inputBuffer.getChannelData(0);
+    const b64 = float32ToInt16Base64(inputData);
+    asrWebSocket.send(JSON.stringify({ type: 'audio', audio: b64 }));
+  };
+
+  source.connect(asrScriptProcessor);
+  asrScriptProcessor.connect(asrAudioContext.destination);
+}
+
+function stopMicCapture(): void {
+  if (asrScriptProcessor) {
+    asrScriptProcessor.disconnect();
+    asrScriptProcessor = null;
+  }
+  if (asrAudioContext) {
+    asrAudioContext.close();
+    asrAudioContext = null;
+  }
+  if (asrMediaStream) {
+    asrMediaStream.getTracks().forEach(t => t.stop());
+    asrMediaStream = null;
+  }
+}
+
+function stopASR(): void {
+  asrIsRecording = false;
+  asrStartBtn.classList.remove('recording');
+
+  if (asrWebSocket && asrWebSocket.readyState === WebSocket.OPEN) {
+    asrWebSocket.send(JSON.stringify({ type: 'stop' }));
+    asrWebSocket.close();
+  }
+  asrWebSocket = null;
+
+  stopMicCapture();
+  setAsrStatus('ready');
+  asrLog('ASR stopped');
+}
+
 // ---------- Event handlers ----------
 
+// Feature tabs (TTS / ASR)
+featureTabs.forEach(tab => {
+  tab.addEventListener('click', () => {
+    switchFeature(tab.dataset.feature as FeatureView);
+  });
+});
+
+// TTS controls
 speakBtn.addEventListener('click', startTTS);
 stopBtn.addEventListener('click', stopTTS);
 
@@ -696,11 +971,18 @@ clearLogBtn.addEventListener('click', () => {
   logContainer.innerHTML = '';
 });
 
-// Mode tabs
+// TTS Mode tabs
 modeTabs.forEach(tab => {
   tab.addEventListener('click', () => {
     switchMode(tab.dataset.mode as AppMode);
   });
+});
+
+// ASR controls
+asrStartBtn.addEventListener('click', startASR);
+asrStopBtn.addEventListener('click', stopASR);
+asrClearLogBtn.addEventListener('click', () => {
+  asrLogContainer.innerHTML = '';
 });
 
 // Model select + custom input
@@ -773,9 +1055,24 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
   
-  // Restore mode
+  // Restore TTS mode
   if (savedMode && (savedMode === 'websocket' || savedMode === 'together')) {
     switchMode(savedMode);
+  }
+
+  // Restore ASR values
+  const savedDeploymentId = localStorage.getItem('asr_deployment_id');
+  const savedAsrKey = localStorage.getItem('asr_api_key');
+  const savedAsrLang = localStorage.getItem('asr_language');
+  const savedFeature = localStorage.getItem('feature_view') as FeatureView | null;
+
+  if (savedDeploymentId) asrDeploymentIdInput.value = savedDeploymentId;
+  if (savedAsrKey) asrApiKeyInput.value = savedAsrKey;
+  if (savedAsrLang) asrLanguageInput.value = savedAsrLang;
+
+  // Restore feature view
+  if (savedFeature && (savedFeature === 'tts' || savedFeature === 'asr')) {
+    switchFeature(savedFeature);
   }
 });
 
@@ -802,6 +1099,17 @@ togetherVoiceSelect.addEventListener('change', () => {
 
 togetherVoiceCustom.addEventListener('input', () => {
   localStorage.setItem('together_voice', togetherVoiceCustom.value);
+});
+
+// ASR localStorage persistence
+asrDeploymentIdInput.addEventListener('change', () => {
+  localStorage.setItem('asr_deployment_id', asrDeploymentIdInput.value);
+});
+asrApiKeyInput.addEventListener('change', () => {
+  localStorage.setItem('asr_api_key', asrApiKeyInput.value);
+});
+asrLanguageInput.addEventListener('change', () => {
+  localStorage.setItem('asr_language', asrLanguageInput.value);
 });
 
 // Handle window resize for visualizer

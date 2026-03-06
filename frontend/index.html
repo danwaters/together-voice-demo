@@ -15,9 +15,31 @@
           <span class="logo-text">together</span><span class="logo-dot">.</span><span class="logo-ai">ai</span>
         </div>
         <div class="header-subtitle">Voice Demo</div>
+
+        <!-- Top-level feature tabs -->
+        <nav class="feature-tabs">
+          <button class="feature-tab active" data-feature="tts">
+            <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+              <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+              <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+            </svg>
+            Text to Speech
+          </button>
+          <button class="feature-tab" data-feature="asr">
+            <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+              <line x1="12" y1="19" x2="12" y2="23"></line>
+              <line x1="8" y1="23" x2="16" y2="23"></line>
+            </svg>
+            Speech to Text
+          </button>
+        </nav>
       </header>
 
-      <main class="main">
+      <!-- ===== TTS VIEW ===== -->
+      <main class="main" id="tts-view">
         <section class="config-section">
           <!-- Mode toggle tabs -->
           <div class="mode-tabs">
@@ -170,6 +192,80 @@
               <button id="clear-log" class="btn-text">Clear</button>
             </div>
             <div class="log" id="log"></div>
+          </div>
+        </section>
+      </main>
+
+      <!-- ===== ASR VIEW ===== -->
+      <main class="main hidden" id="asr-view">
+        <section class="config-section">
+          <div class="input-row">
+            <div class="input-group">
+              <label for="asr-deployment-id">Deployment ID</label>
+              <input 
+                type="text" 
+                id="asr-deployment-id" 
+                placeholder="Your ASR deployment ID"
+                spellcheck="false"
+              />
+            </div>
+            <div class="input-group input-small">
+              <label for="asr-language">Language</label>
+              <input 
+                type="text" 
+                id="asr-language" 
+                value="en"
+                placeholder="en"
+              />
+            </div>
+          </div>
+          <div class="input-group">
+            <label for="asr-api-key">Together API Key</label>
+            <input 
+              type="password" 
+              id="asr-api-key" 
+              placeholder="Your Together AI API key"
+            />
+          </div>
+        </section>
+
+        <section class="asr-controls-section">
+          <div class="controls">
+            <button id="asr-start-btn" class="btn btn-primary">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                <line x1="12" y1="19" x2="12" y2="23"></line>
+                <line x1="8" y1="23" x2="16" y2="23"></line>
+              </svg>
+              <span>Start Listening</span>
+            </button>
+            
+            <button id="asr-stop-btn" class="btn btn-secondary" disabled>
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="6" y="6" width="12" height="12"></rect>
+              </svg>
+              <span>Stop</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="status-section">
+          <div class="status-header">
+            <div class="status-indicator" id="asr-status-indicator"></div>
+            <span id="asr-status-text">Ready</span>
+          </div>
+
+          <div class="transcript-area" id="asr-transcript">
+            <div class="transcript-placeholder">Transcription will appear here...</div>
+          </div>
+
+          <div class="log-container">
+            <div class="log-header">
+              <span>Event Log</span>
+              <button id="asr-clear-log" class="btn-text">Clear</button>
+            </div>
+            <div class="log" id="asr-log"></div>
           </div>
         </section>
       </main>
