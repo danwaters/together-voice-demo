@@ -106,6 +106,41 @@ body {
   border-left: 1px solid var(--border-color);
 }
 
+/* Feature tabs (top-level TTS / ASR) */
+.feature-tabs {
+  display: flex;
+  gap: var(--space-xs);
+  margin-left: auto;
+}
+
+.feature-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.feature-tab:hover {
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+}
+
+.feature-tab.active {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  border-color: var(--together-blue);
+  box-shadow: 0 0 0 1px var(--together-blue);
+}
+
 /* Main content */
 .main {
   flex: 1;
@@ -546,6 +581,50 @@ select option {
   color: var(--together-blue-bright);
 }
 
+/* ASR Transcript area */
+.transcript-area {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  line-height: 1.8;
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  padding: var(--space-lg);
+  min-height: 200px;
+  max-height: 400px;
+  overflow-y: auto;
+  color: var(--text-primary);
+}
+
+.transcript-placeholder {
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+.transcript-segment {
+  margin-bottom: var(--space-xs);
+}
+
+.transcript-partial {
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+.transcript-final {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* ASR mic pulse animation */
+.asr-controls-section .btn-primary.recording {
+  animation: mic-pulse 1.5s ease-in-out infinite;
+  background: var(--error);
+}
+
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+  50% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+}
+
 /* Responsive */
 @media (max-width: 640px) {
   .header {
@@ -582,5 +661,15 @@ select option {
   
   .mode-tabs {
     flex-direction: column;
+  }
+
+  .feature-tabs {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .feature-tab {
+    flex: 1;
+    justify-content: center;
   }
 }

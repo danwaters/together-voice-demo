@@ -1,11 +1,13 @@
 # Together AI Voice Demo
 
-Test and evaluate Together AI text-to-speech models with two included tools: a **CLI script** that plays audio straight to your speakers, and a **web UI** with real-time visualization and TTFB measurement.
+Test and evaluate Together AI voice models with included CLI scripts and a **web UI**. Supports both text-to-speech (TTS) and speech-to-text (ASR).
 
-The demo supports two modes:
-
+**Text to Speech:**
 - **Together API** — Call any Together AI TTS model directly via the REST API. Supports streaming, voice selection, and TTFB benchmarking.
 - **WebSocket** — Connect to a Together AI TTS WebSocket deployment for real-time streaming.
+
+**Speech to Text:**
+- Stream microphone audio to an ASR deployment and see live transcription in your terminal or browser.
 
 ![Together API Mode](docs/screenshot2.png)
 
@@ -114,6 +116,79 @@ python tts_stream.py "Hello world" --model canopylabs/orpheus-3b-0.1-ft
 
 ---
 
+## Quick Start — Speech to Text (CLI)
+
+Stream live microphone audio to a Together AI ASR deployment and see transcription in your terminal.
+
+### Setup
+
+```bash
+cd cli
+pip install -r requirements.txt
+```
+
+### Run
+
+You'll need a **Deployment ID** for your ASR model and a Together API key.
+
+**Basic usage:**
+
+```bash
+python asr_stream.py \
+  --deployment-id your-deployment-id \
+  --api-key $TOGETHER_API_KEY
+```
+
+**Specify a language:**
+
+```bash
+python asr_stream.py \
+  --deployment-id your-deployment-id \
+  --lang ja
+```
+
+**Using environment variables** (no flags needed):
+
+```bash
+export DEPLOYMENT_ID="your-deployment-id"
+export TOGETHER_API_KEY="your-key-here"
+python asr_stream.py
+```
+
+**Direct WebSocket URL** (for local testing):
+
+```bash
+python asr_stream.py --url ws://localhost:6380/v1/realtime
+```
+
+### Example output
+
+```
+=== Streaming Speech-to-Text ===
+Connecting to: wss://api.together.ai/v1/deployment-request/.../v1/realtime
+Language: en
+Audio: 24000Hz, 1ch, int16 PCM
+Speak into your microphone. Press Ctrl+C to stop.
+
+  Recording... (Ctrl+C to stop)
+
+  Ready — listening...
+
+  >> Hello, this is a test of the speech to text system.
+  >> It transcribes in real time as you speak.
+```
+
+### ASR CLI Options
+
+| Flag | Description |
+|------|-------------|
+| `--deployment-id`, `-d` | Together AI deployment ID (or set `DEPLOYMENT_ID` env var) |
+| `--api-key`, `-k` | Together API key (or set `TOGETHER_API_KEY` env var) |
+| `--lang`, `-l` | Language code (default: `en`) |
+| `--url`, `-u` | Direct WebSocket URL — overrides `--deployment-id` for local testing |
+
+---
+
 ## Web UI
 
 A browser-based interface with model/voice selection, real-time audio visualization, TTFB measurement, and an event log. The web UI uses a lightweight Python backend that relays API calls and proxies WebSocket connections.
@@ -134,7 +209,7 @@ A browser-based interface with model/voice selection, real-time audio visualizat
 cd backend
 uv venv && source .venv/bin/activate
 uv pip install -e .
-uvicorn main:app --reload --port 8000
+uvicorn main:app --reload --port 8800
 ```
 
 > Don't have [uv](https://github.com/astral-sh/uv)? You can use `python -m venv .venv && source .venv/bin/activate && pip install -e .` instead.
@@ -142,7 +217,7 @@ uvicorn main:app --reload --port 8000
 You should see:
 
 ```
-INFO:     Uvicorn running on http://0.0.0.0:8000
+INFO:     Uvicorn running on http://0.0.0.0:8800
 INFO:     🚀 Together AI Voice Demo backend starting...
 ```
 
@@ -161,12 +236,12 @@ You should see:
 ```
   VITE v5.x.x  ready in xxx ms
 
-  ➜  Local:   http://localhost:5173/
+  ➜  Local:   http://localhost:5180/
 ```
 
 ### 3. Use the demo
 
-Open [http://localhost:5173/](http://localhost:5173/) in your browser.
+Open [http://localhost:5180/](http://localhost:5180/) in your browser.
 
 #### Together API mode (recommended for getting started)
 
@@ -191,6 +266,18 @@ Once audio starts streaming, you'll see:
 3. **API Key** (optional) — Your Together API key for authenticated endpoints
 4. **Language** — Language code (e.g. `en`, `ja`, `es`)
 5. **Text** — Enter text and click **Speak**
+
+#### Speech to Text
+
+Switch to **Speech to Text** using the tabs in the header.
+
+1. **Deployment ID** — Enter your ASR deployment ID
+2. **Together API Key** — Paste your [Together AI API key](https://api.together.ai/settings/api-keys)
+3. **Language** — Language code (default: `en`)
+4. Click **Start Listening** — your browser will request microphone permission
+5. Speak into your microphone — partial transcription appears in grey/italic, finalized segments turn white
+
+Click **Stop** when done.
 
 > **Tip:** All settings are saved to your browser's localStorage, so they persist between sessions.
 
@@ -226,15 +313,16 @@ Audio is base64-encoded float32 PCM at 24 kHz mono.
 ```
 voice-demo/
 ├── cli/
-│   ├── tts_stream.py     # CLI streaming client (WebSocket + Together API)
+│   ├── tts_stream.py     # TTS CLI (WebSocket + Together API)
+│   ├── asr_stream.py     # ASR CLI (streaming mic-to-transcript)
 │   └── requirements.txt
 ├── backend/
-│   ├── main.py           # FastAPI backend (WS proxy + Together API relay)
+│   ├── main.py           # FastAPI backend (TTS proxy + ASR proxy)
 │   └── pyproject.toml
 ├── frontend/
-│   ├── index.html        # Main HTML (mode tabs, model/voice selection)
+│   ├── index.html        # Main HTML (TTS + ASR views, tabbed layout)
 │   ├── src/
-│   │   ├── main.ts       # Client logic, audio scheduling, TTFB display
+│   │   ├── main.ts       # Client logic (TTS audio, ASR mic capture, transcripts)
 │   │   └── style.css     # Dark theme styles
 │   ├── package.json
 │   └── vite.config.ts
@@ -251,12 +339,15 @@ voice-demo/
 |-------|----------|
 | `unsupported_language` error | Use ISO 639-1 codes: `en`, `ja`, `es`, etc. (not `jp`) |
 | No audio plays in browser | Check browser console; ensure AudioContext is allowed (click the page first) |
-| Connection refused | Verify the backend is running on port 8000 |
+| Connection refused | Verify the backend is running on port 8800 |
 | CORS errors | Use the backend proxy; don't connect to the Together API directly from the browser |
 | CLI: `No module named sounddevice` | Run `pip install -r requirements.txt` in the `cli/` directory |
 | CLI: `No module named httpx` | Run `pip install -r requirements.txt` in the `cli/` directory |
 | Together API: 401 error | Check your API key is correct and has TTS access |
 | Together API: no audio | Verify the voice name is valid for the selected model |
+| ASR: "Mic denied" in browser | Allow microphone access when prompted; HTTPS or localhost required |
+| ASR: no transcription | Verify deployment ID is correct and the deployment is running |
+| ASR CLI: connection refused | Check your deployment ID and API key; ensure the deployment is active |
 
 ## License
 
